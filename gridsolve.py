@@ -11,7 +11,7 @@ class TechRules(object):
 
   # Returns the minimum space/separation for the given layer pair.
   # "layer1" can be identical to "layer2"
-  def space_for(self, layer1, layer2):
+  def space(self, layer1, layer2):
 
     # @@@ demo, functional layers are:
     # 0: diff
@@ -75,7 +75,7 @@ class ViaTechDefinitions(object):
 
     # for efficiency, we don't produce each single via, but just a common box
     vbox = kl.DBox()
-    for b in self.via_geometry(bottom_layer, top_layer, bottom_widths, top_widths, bbox & tbox):
+    for b in self.via_geometry(bottom_layer, top_layer, bottom_widths, top_widths):
       vbox += b
     
     return (bbox, vbox, tbox)
@@ -114,8 +114,8 @@ class ViaTechDefinitions(object):
   # with given size and space
   def create_farm_via(self, via_size, via_space, via_box):
 
-    nx = max(1, math.floor(1e-10 + (via_box.width + via_space) / (via_size + via_space)))
-    ny = max(1, math.floor(1e-10 + (via_box.height + via_space) / (via_size + via_space)))
+    nx = max(1, math.floor(1e-10 + (via_box.width() + via_space) / (via_size + via_space)))
+    ny = max(1, math.floor(1e-10 + (via_box.height() + via_space) / (via_size + via_space)))
   
     geometry = []
     for i in range(0, nx):
@@ -154,7 +154,7 @@ mosfet_tech_definitions = MOSFETTechDefinitions()
 # a grid vertex
 class Vertex(object):
   
-  def __init__(self, ix, iy, layer)
+  def __init__(self, ix, iy, layer):
     self.ix = ix
     self.iy = iy
     self.layer = layer
@@ -199,7 +199,7 @@ class Graph(object):
 
   def add(self, component):
 
-    self.components.add(component)
+    self.components.append(component)
 
     for v in component.vertexes():
 
@@ -212,7 +212,7 @@ class Graph(object):
         self.components_per_layer[v.layer].append(component)
 
       ixy = v.ixy()
-      if ixy in self.components_per_index:
+      if not ixy in self.components_per_index:
         self.components_per_index[ixy] = [component]
       else:
         self.components_per_index[ixy].append(component)
@@ -241,15 +241,15 @@ class Component(object):
     return self.geometry_for_boxes(x_coordinates, y_coordinates, self.boxes(graph))
 
   def geometry_for_boxes(self, x_coordinates, y_coordinates, boxes):
-    return [ b.box * kl.DBox(x_coordinates[b.ix1], y_coordinates[b.iy1], x_coordinates[b.ix2], y_coordinates[b.iy2]) for b in boxes ]
+    return [ [ b.layer, b.box * kl.DBox(x_coordinates[b.ix1], y_coordinates[b.iy1], x_coordinates[b.ix2], y_coordinates[b.iy2]) ] for b in boxes ]
 
 
 # a wire implementation
 class Wire(Component):
 
-  def __self__(self, width, v1, v2)
+  def __init__(self, width, v1, v2):
     # TODO: assert that v1.layer == v2.layer and v1.ix == v2.ix || v1.iy == v2.iy
-    if self.v1.ix > self.v2.ix or self.v1.iy > self.v2.iy:
+    if v1.ix > v2.ix or v1.iy > v2.iy:
       (self.v1, self.v2) = (v2, v1)
     else:
       (self.v1, self.v2) = (v1, v2)
@@ -268,9 +268,9 @@ class Wire(Component):
     box1 = self.min_box_per_vertex(graph, self.v1)
     box2 = self.min_box_per_vertex(graph, self.v2)
     if self.is_horizontal():
-      wire_box = kl.DBox(kl.DPoint(box1.left, -0.5 * width), kl.DPoint(box2.right, 0.5 * width))
+      wire_box = kl.DBox(kl.DPoint(box1.left, -0.5 * self.width), kl.DPoint(box2.right, 0.5 * self.width))
     else:
-      wire_box = kl.DBox(kl.DPoint(-0.5 * width, box1.bottom), kl.DPoint(0.5 * width, box2.top))
+      wire_box = kl.DBox(kl.DPoint(-0.5 * self.width, box1.bottom), kl.DPoint(0.5 * self.width, box2.top))
     return [ Box(self.v1.ix, self.v1.iy, self.v2.ix, self.v2.iy, wire_box, self.layer()) ]
 
   # computes the minimum box as imposed by perpendicular wires
@@ -300,7 +300,7 @@ class Via(Component):
   # for the boxes we use a summarized definition of the farm vias
   def boxes(self, graph):
 
-    widths = get_widths(graph)
+    widths = self.get_widths(graph)
 
     (bbox, vbox, tbox) = self.via_tech_definitions.boxes(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
 
@@ -311,11 +311,11 @@ class Via(Component):
              Box(v.ix, v.iy, v.ix, v.iy, vbox, self.via_vertex.layer) ]
 
   # for the geometry we use the detailed geometry with the farm vias
-  def geometry(self, graph):
+  def geometry(self, graph, x_coordinates, y_coordinates):
 
-    widths = get_widths(graph)
+    widths = self.get_widths(graph)
 
-    (bbox, -, tbox) = self.via_tech_definitions.boxes(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
+    (bbox, unused, tbox) = self.via_tech_definitions.boxes(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
     detailed_vboxes = self.via_tech_definitions.via_geometry(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
 
     v = self.bottom_vertex
@@ -326,19 +326,19 @@ class Via(Component):
     for vbox in detailed_vboxes:
       geometry.append(Box(v.ix, v.iy, v.ix, v.iy, vbox, self.via_vertex.layer))
 
-    return geometry
+    return self.geometry_for_boxes(x_coordinates, y_coordinates, geometry)
 
   def get_widths(self, graph):
 
     widths = [ [ None ] * 4 ] * 2
 
     # analyze wires
-    for c in graph.components_for_vertex(v.ixy()):
+    for c in graph.components_for_vertex(self.via_vertex.ixy()):
       if type(c) is Wire:
         li = -1
-        if c.layer() == self.bottom_vertex.layer():
+        if c.layer() == self.bottom_vertex.layer:
           li = 0
-        elif c.layer() == self.top_vertex.layer():
+        elif c.layer() == self.top_vertex.layer:
           li = 1
         if li >= 0:
           widths[li][self.direction_index(c)] = c.width
@@ -349,12 +349,12 @@ class Via(Component):
     if wire.is_horizontal():
       if wire.v1.ix < self.bottom_vertex.ix:
         return 0
-      else
+      else:
         return 2
     else:
       if wire.v1.iy < self.bottom_vertex.iy:
         return 1
-      else
+      else:
         return 3
 
 
@@ -373,7 +373,7 @@ class MOSFET(Component):
       (self.source_vertex, self.drain_vertex) = (drain_vertex, source_vertex)
 
     self.width = width
-    self.height = height
+    self.length = length
     # @@@ redundant
     self.poly_layer = self.gate_vertex.layer
     self.diff_layer = self.source_vertex.layer
@@ -386,12 +386,12 @@ class MOSFET(Component):
   def boxes(self, graph):
 
     sd_width = self.mosfet_tech_definitions.source_drain_active_width()
-    sd_box = kl.DBox(kl.DPoint(-0.5 * sd_width, -0.5 * width), kl.DPoint(0.5 * sd_width, 0.5 * width))
+    sd_box = kl.DBox(kl.DPoint(-0.5 * sd_width, -0.5 * self.width), kl.DPoint(0.5 * sd_width, 0.5 * self.width))
 
-    gate_box = kl.DBox(kl.DPoint(), kl.DPoint()).enlarged(0.5 * length, 0.5 * width)
+    gate_box = kl.DBox(kl.DPoint(), kl.DPoint()).enlarged(0.5 * self.length, 0.5 * self.width)
 
     return [ Box(self.source_vertex.ix, self.source_vertex.iy, self.drain_vertex.ix, self.drain_vertex.iy, sd_box, self.diff_layer),
-             Box(self.gate_vertex.ix, self.gate_vertex.iy, self.gate_vertex.ix, self.gate_vertex.iy, gate_box, self.gate_layer) ]
+             Box(self.gate_vertex.ix, self.gate_vertex.iy, self.gate_vertex.ix, self.gate_vertex.iy, gate_box, self.poly_layer) ]
 
 
 class ConstraintSolver(object):
@@ -399,8 +399,8 @@ class ConstraintSolver(object):
   def __init__(self, graph):
 
     self.graph = graph
-    self.ix = sort([ v for v in graph.x_indexes ])
-    self.iy = sort([ v for v in graph.y_indexes ])
+    self.ix = sorted([ v for v in graph.x_indexes ])
+    self.iy = sorted([ v for v in graph.y_indexes ])
     self.x_coordinates = None
     self.y_coordinates = None
 
@@ -411,14 +411,14 @@ class ConstraintSolver(object):
     self.x_coordinates = {}
     self.y_coordinates = {}
     for i in self.ix:
-      self.x_coordinates[i] = i * initial_grid_x
+      self.x_coordinates[i] = initial_grid_x * i
     for i in self.iy:
-      self.y_coordinates[i] = i * initial_grid_y
+      self.y_coordinates[i] = initial_grid_y * i
 
     threshold = 0.05 # @@@?
     max_iter = 10
 
-    delta = threshold
+    delta = threshold * 2
     niter = 0
     
     while delta > threshold and niter < max_iter:
@@ -426,33 +426,32 @@ class ConstraintSolver(object):
       xc = self.x_coordinates.copy()
       yc = self.y_coordinates.copy()
 
-      self.compute_coordinates_h
-      self.compute_coordinates_v
+      self.compute_coordinates_h()
+      self.compute_coordinates_v()
 
       niter += 1
-      delta = diff(xc, self.x_coordinates) + diff(yc, self.y_coordinates)
+      delta = self.diff(xc, self.x_coordinates) + self.diff(yc, self.y_coordinates)
 
-      print(f"@@@ iter={iter} -> delta={delta}")
+      print(f"@@@ x=" + ",".join([ "%.12g" % v for v in self.x_coordinates.values() ]))
+      print(f"@@@ y=" + ",".join([ "%.12g" % v for v in self.y_coordinates.values() ]))
+      print(f"@@@ iter={niter} -> delta={delta}")
 
-    return niter < max_item
+    return niter < max_iter
 
   # generates the layout
   # layout and cell are layout and top cell objects respectively
   # layers are the layer indexes in the layout by functional layer index
   def produce(self, layout, cell, layers):
 
-    for layer in range(0, self.tech_rules.layers()):
+    for c in self.graph.components:
 
-      shapes = cell.shapes(layers[layer])
-
-      for c in self.graph.components_per_layer(layer):
-        for g in c.geometry(layer, self.graph, self.x_coordinates, self.y_coordinates):
-          shapes.insert(g)
+      for g in c.geometry(self.graph, self.x_coordinates, self.y_coordinates):
+        cell.shapes(layers[g[0]]).insert(g[1])
 
 
   def diff(self, a, b):
     d = 0.0
-    for i in len(a):
+    for i in range(0, len(a)):
       d += math.sqrt((a[i] - b[i]) ** 2)
     return d
 
@@ -466,7 +465,7 @@ class ConstraintSolver(object):
       current_boxes = []
       for j in self.iy:
         for c in self.graph.components_for_vertex(( i, j )):
-          for b in c.boxes(self):
+          for b in c.boxes(self.graph):
             if b.ix1 == i:
               current_boxes.append(b)
 
@@ -490,7 +489,7 @@ class ConstraintSolver(object):
     if b1.ix2 >= b2.ix1:
       return None
 
-    dbox1 = b1.box * kl.DBox(self.x_coordinates[b1.ix1], self.y_coordinates[b.iy1], self.x_coordinates[b1.ix2], self.y_coordinates[b1.iy2])
+    dbox1 = b1.box * kl.DBox(self.x_coordinates[b1.ix1], self.y_coordinates[b1.iy1], self.x_coordinates[b1.ix2], self.y_coordinates[b1.iy2])
     dbox2 = b2.box * kl.DBox(0.0, self.y_coordinates[b2.iy1], 0.0, self.y_coordinates[b2.iy2])
 
     dbox1 = dbox1.enlarged(space, space)
@@ -510,7 +509,7 @@ class ConstraintSolver(object):
       current_boxes = []
       for j in self.ix:
         for c in self.graph.components_for_vertex(( j, i )):
-          for b in c.boxes(self):
+          for b in c.boxes(self.graph):
             if b.iy1 == i:
               current_boxes.append(b)
 
@@ -534,7 +533,7 @@ class ConstraintSolver(object):
     if b1.iy2 >= b2.iy1:
       return None
 
-    dbox1 = b1.box * kl.DBox(self.x_coordinates[b1.ix1], self.y_coordinates[b.iy1], self.x_coordinates[b1.ix2], self.y_coordinates[b1.iy2])
+    dbox1 = b1.box * kl.DBox(self.x_coordinates[b1.ix1], self.y_coordinates[b1.iy1], self.x_coordinates[b1.ix2], self.y_coordinates[b1.iy2])
     dbox2 = b2.box * kl.DBox(self.x_coordinates[b2.ix1], 0.0, self.x_coordinates[b2.ix2], 0.0)
 
     dbox1 = dbox1.enlarged(space, space)
@@ -550,7 +549,7 @@ class ConstraintSolver(object):
 
 # a test rig
 
-graph = Graph()
+output = "generated.gds"
 
 diff = 0
 contact = 1
@@ -566,6 +565,8 @@ polyw = 0.13
 l = 0.13
 wp = 0.6
 wn = 0.4
+
+graph = Graph()
 
 graph.add(MOSFET(Vertex(1, 3, poly), Vertex(0, 3, diff), Vertex(2, 3, diff), wp, l))
 graph.add(MOSFET(Vertex(3, 3, poly), Vertex(4, 3, diff), Vertex(2, 3, diff), wp, l))
@@ -619,5 +620,6 @@ layers[metal2]  = layout.layer(17, 0)
 
 solver.produce(layout, top_cell, layers)
 
-layout.write("generated.gds")
+layout.write(output)
+print(f"{output} written.")
 
