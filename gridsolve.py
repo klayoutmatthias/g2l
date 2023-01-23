@@ -2,6 +2,154 @@
 import klayout.db as kl
 import math
 
+# -------------------------------------------------------------
+
+class TechRules(object):
+
+  def __init__(self):
+    pass
+
+  # Returns the minimum space/separation for the given layer pair.
+  # "layer1" can be identical to "layer2"
+  def space_for(self, layer1, layer2):
+
+    # @@@ demo, functional layers are:
+    # 0: diff
+    # 1: poly
+    # 2: contact
+    # 3: metal1
+    # 4: via1
+    # 5: metal2
+
+    if layer1 == 0 and layer2 == 0:
+      return 0.2   # diff space
+    elif layer1 == 1 and layer2 == 1:
+      return 0.2   # poly space
+    elif layer1 == 1 and layer2 == 2:
+      return 0.05  # poly/contact space
+    elif layer1 == 2 and layer2 == 2:
+      return 0.2   # contact space
+    elif layer1 == 3 and layer2 == 3:
+      return 0.2   # metal1 space
+    elif layer1 == 4 and layer2 == 4:
+      return 0.2   # via1 space
+    elif layer1 == 5 and layer2 == 5:
+      return 0.2   # metal2 space
+    else:
+      return None
+
+  # gets the number of functional layer indexes
+  def layers(self):
+    # @@@
+    return 6
+    
+  def default_wire_width(self, layer):
+
+    if layer == 3:
+      return 0.2
+    elif layer == 5:
+      return 0.2
+    else:
+      return None
+
+# @@@
+tech_rules = TechRules()
+
+
+# Supplies an algorithm for defining the via enclosures and other via definitions
+
+class ViaTechDefinitions(object):
+
+  def __init__(self):
+    pass
+
+  # Gets the landing pad boxes
+  # "bottom_widths" are the widths of the attached wires from [ left, bottom, right, top ]
+  # ("None" indicates that there is no connection from that side)
+  # "top_widths" is the same for the top layer.
+  # The returned values need to be minimum boxes for bottom and top layers as a tuple.
+  # The boxes are supposed to be 0,0 centered.
+  def boxes(self, bottom_layer, top_layer, bottom_widths, top_widths):
+
+    (bbox, tbox) = self.top_bottom_boxes(bottom_layer, top_layer, bottom_widths, top_widths)
+
+    # for efficiency, we don't produce each single via, but just a common box
+    vbox = kl.DBox()
+    for b in self.via_geometry(bottom_layer, top_layer, bottom_widths, top_widths, bbox & tbox):
+      vbox += b
+    
+    return (bbox, vbox, tbox)
+
+  # Gets the via geometry
+  # Parameters as in "boxes". The returned geometry objects are supposed to be 
+  # created for a via at 0,0.
+  def via_geometry(self, bottom_layer, top_layer, bottom_widths, top_widths):
+
+    # Simple demo implementation with single dimension
+    # @@@
+    via_size = 0.14
+    via_space = 0.2
+
+    (bbox, tbox) = self.top_bottom_boxes(bottom_layer, top_layer, bottom_widths, top_widths)
+
+    return self.create_farm_via(via_size, via_space, bbox & tbox)
+
+  def top_bottom_boxes(self, bottom_layer, top_layer, bottom_widths, top_widths):
+
+    # Simple demo implementation with plain enlargement
+    # @@@
+    enclosure = 0.05
+    
+    bw = max([ bottom_widths[i] or 0.0 for i in [1, 3] ])
+    bh = max([ bottom_widths[i] or 0.0 for i in [0, 2] ])
+    bbox = kl.DBox(-0.5 * bw, -0.5 * bh, 0.5 * bw, 0.5 * bh).enlarged(enclosure, enclosure)
+
+    tw = max([ top_widths[i] or 0.0 for i in [1, 3] ])
+    th = max([ top_widths[i] or 0.0 for i in [0, 2] ])
+    tbox = kl.DBox(-0.5 * tw, -0.5 * th, 0.5 * tw, 0.5 * th).enlarged(enclosure, enclosure)
+
+    return (bbox, tbox)
+
+  # Creates a farm via (array) covering the given "via_box" with vias
+  # with given size and space
+  def create_farm_via(self, via_size, via_space, via_box):
+
+    nx = max(1, math.floor(1e-10 + (via_box.width + via_space) / (via_size + via_space)))
+    ny = max(1, math.floor(1e-10 + (via_box.height + via_space) / (via_size + via_space)))
+  
+    geometry = []
+    for i in range(0, nx):
+      for j in range(0, ny):
+        x = (i - (nx - 1) * 0.5) * (via_size + via_space)
+        y = (j - (ny - 1) * 0.5) * (via_size + via_space)
+        geometry.append(kl.DBox(-0.5 * via_size, -0.5 * via_size, 0.5 * via_size, 0.5 * via_size).moved(x, y))
+        
+    return geometry
+
+# @@@ 
+via_tech_definitions = ViaTechDefinitions()
+
+
+class MOSFETTechDefinitions(object):
+
+  def __init__(self):
+    pass
+
+  # @@@ dummy definitions
+
+  # the extension the gate poly needs to have over active area
+  def poly_gate_extensions(self):
+    return 0.05
+
+  def source_drain_active_width(self):
+    return 0.2
+  
+# @@@
+mosfet_tech_definitions = MOSFETTechDefinitions()
+
+
+
+# -------------------------------------------------------------
 
 # a grid vertex
 class Vertex(object):
@@ -49,7 +197,7 @@ class Graph(object):
     self.components_per_layer = {}
     self.components_per_index = {}
 
-  def add_component(self, component):
+  def add(self, component):
 
     self.components.add(component)
 
@@ -137,80 +285,6 @@ class Wire(Component):
     return box
 
 
-# Supplies an algorithm for defining the via enclosures and other via definitions
-
-class ViaTechDefinitions(object):
-
-  def __init__(self):
-    pass
-
-  # Gets the landing pad boxes
-  # "bottom_widths" are the widths of the attached wires from [ left, bottom, right, top ]
-  # ("None" indicates that there is no connection from that side)
-  # "top_widths" is the same for the top layer.
-  # The returned values need to be minimum boxes for bottom and top layers as a tuple.
-  # The boxes are supposed to be 0,0 centered.
-  def boxes(self, bottom_layer, top_layer, bottom_widths, top_widths):
-
-    (bbox, tbox) = self.top_bottom_boxes(bottom_layer, top_layer, bottom_widths, top_widths)
-
-    # for efficiency, we don't produce each single via, but just a common box
-    vbox = kl.DBox()
-    for b in self.via_geometry(bottom_layer, top_layer, bottom_widths, top_widths, bbox & tbox):
-      vbox += b
-    
-    return (bbox, vbox, tbox)
-
-  # Gets the via geometry
-  # Parameters as in "boxes". The returned geometry objects are supposed to be 
-  # created for a via at 0,0.
-  def via_geometry(self, bottom_layer, top_layer, bottom_widths, top_widths):
-
-    # Simple demo implementation with single dimension
-    # @@@
-    via_size = 0.14
-    via_space = 0.2
-
-    (bbox, tbox) = self.top_bottom_boxes(bottom_layer, top_layer, bottom_widths, top_widths)
-
-    return self.create_farm_via(via_size, via_space, bbox & tbox)
-
-  def top_bottom_boxes(self, bottom_layer, top_layer, bottom_widths, top_widths):
-
-    # Simple demo implementation with plain enlargement
-    # @@@
-    enclosure = 0.05
-    
-    bw = max([ bottom_widths[i] or 0.0 for i in [1, 3] ])
-    bh = max([ bottom_widths[i] or 0.0 for i in [0, 2] ])
-    bbox = kl.DBox(-0.5 * bw, -0.5 * bh, 0.5 * bw, 0.5 * bh).enlarged(enclosure, enclosure)
-
-    tw = max([ top_widths[i] or 0.0 for i in [1, 3] ])
-    th = max([ top_widths[i] or 0.0 for i in [0, 2] ])
-    tbox = kl.DBox(-0.5 * tw, -0.5 * th, 0.5 * tw, 0.5 * th).enlarged(enclosure, enclosure)
-
-    return (bbox, tbox)
-
-  # Creates a farm via (array) covering the given "via_box" with vias
-  # with given size and space
-  def create_farm_via(self, via_size, via_space, via_box):
-
-    nx = max(1, math.floor(1e-10 + (via_box.width + via_space) / (via_size + via_space)))
-    ny = max(1, math.floor(1e-10 + (via_box.height + via_space) / (via_size + via_space)))
-  
-    geometry = []
-    for i in range(0, nx):
-      for j in range(0, ny):
-        x = (i - (nx - 1) * 0.5) * (via_size + via_space)
-        y = (j - (ny - 1) * 0.5) * (via_size + via_space)
-        geometry.append(kl.DBox(-0.5 * via_size, -0.5 * via_size, 0.5 * via_size, 0.5 * via_size).moved(x, y))
-        
-    return geometry
-
-# @@@ 
-via_tech_definitions = ViaTechDefinitions()
-
-
 class Via(Component):
   
   def __init__(self, bottom_vertex, top_vertex, via_vertex):
@@ -284,27 +358,9 @@ class Via(Component):
         return 3
 
 
-class MOSFETTechDefinitions(object):
-
-  def __init__(self):
-    pass
-
-  # @@@ dummy definitions
-
-  # the extension the gate poly needs to have over active area
-  def poly_gate_extensions(self):
-    return 0.05
-
-  def source_drain_active_width(self):
-    return 0.2
-  
-# @@@
-mosfet_tech_definitions = MOSFETTechDefinitions()
-
-
 class MOSFET(Component):
 
-  def __init__(self, gate_vertex, source_vertex, drain_vertex, width, length, poly_layer, diff_layer):
+  def __init__(self, gate_vertex, source_vertex, drain_vertex, width, length):
 
     # TODO: assert that gate_vertex.iy == source_vertex.iy and gate_vertex.iy == drain_vertex.iy
     # (or generalize for horizontal orientation)
@@ -318,8 +374,9 @@ class MOSFET(Component):
 
     self.width = width
     self.height = height
-    self.poly_layer = poly_layer
-    self.diff_layer = diff_layer
+    # @@@ redundant
+    self.poly_layer = self.gate_vertex.layer
+    self.diff_layer = self.source_vertex.layer
 
     self.mosfet_tech_definitions = mosfet_tech_definitions
 
@@ -336,49 +393,6 @@ class MOSFET(Component):
     return [ Box(self.source_vertex.ix, self.source_vertex.iy, self.drain_vertex.ix, self.drain_vertex.iy, sd_box, self.diff_layer),
              Box(self.gate_vertex.ix, self.gate_vertex.iy, self.gate_vertex.ix, self.gate_vertex.iy, gate_box, self.gate_layer) ]
 
-
-class TechRules(object):
-
-  def __init__(self):
-    pass
-
-  # Returns the minimum space/separation for the given layer pair.
-  # "layer1" can be identical to "layer2"
-  def space_for(self, layer1, layer2):
-
-    # @@@ demo, functional layers are:
-    # 0: diff
-    # 1: poly
-    # 2: contact
-    # 3: metal1
-    # 4: via1
-    # 5: metal2
-
-    if layer1 == 0 and layer2 == 0:
-      return 0.2   # diff space
-    elif layer1 == 1 and layer2 == 1:
-      return 0.2   # poly space
-    elif layer1 == 1 and layer2 == 2:
-      return 0.05  # poly/contact space
-    elif layer1 == 2 and layer2 == 2:
-      return 0.2   # contact space
-    elif layer1 == 3 and layer2 == 3:
-      return 0.2   # metal1 space
-    elif layer1 == 4 and layer2 == 4:
-      return 0.2   # via1 space
-    elif layer1 == 5 and layer2 == 5:
-      return 0.2   # metal2 space
-    else:
-      return None
-
-  # gets the number of functional layer indexes
-  def layers(self):
-    # @@@
-    return 6
-    
-
-# @@@
-tech_rules = TechRules()
 
 class ConstraintSolver(object):
 
@@ -418,12 +432,14 @@ class ConstraintSolver(object):
       niter += 1
       delta = diff(xc, self.x_coordinates) + diff(yc, self.y_coordinates)
 
+      print(f"@@@ iter={iter} -> delta={delta}")
+
     return niter < max_item
 
   # generates the layout
   # layout and cell are layout and top cell objects respectively
   # layers are the layer indexes in the layout by functional layer index
-  def produce_geometry(self, layout, cell, layers):
+  def produce(self, layout, cell, layers):
 
     for layer in range(0, self.tech_rules.layers()):
 
@@ -530,5 +546,78 @@ class ConstraintSolver(object):
     return dbox1.top - dbox2.bottom
 
 
+# ------------------------------------------------------------------
 
+# a test rig
+
+graph = Graph()
+
+diff = 0
+contact = 1
+poly = 2
+metal1 = 3
+via1 = 4
+metal2 = 5
+
+metal1w = 0.2
+metal2w = 0.2
+polyw = 0.13
+
+l = 0.13
+wp = 0.6
+wn = 0.4
+
+graph.add(MOSFET(Vertex(1, 3, poly), Vertex(0, 3, diff), Vertex(2, 3, diff), wp, l))
+graph.add(MOSFET(Vertex(3, 3, poly), Vertex(4, 3, diff), Vertex(2, 3, diff), wp, l))
+graph.add(MOSFET(Vertex(5, 3, poly), Vertex(4, 3, diff), Vertex(6, 3, diff), wp, l))
+graph.add(MOSFET(Vertex(1, 1, poly), Vertex(0, 1, diff), Vertex(2, 1, diff), wn, l))
+graph.add(MOSFET(Vertex(3, 1, poly), Vertex(4, 1, diff), Vertex(2, 1, diff), wn, l))
+graph.add(MOSFET(Vertex(5, 1, poly), Vertex(4, 1, diff), Vertex(6, 1, diff), wn, l))
+
+graph.add(Wire(metal1w, Vertex(0, 4, metal1), Vertex(0, 5, metal1)))
+graph.add(Wire(metal1w, Vertex(4, 4, metal1), Vertex(4, 5, metal1)))
+graph.add(Wire(0.5, Vertex(0, 5, metal1), Vertex(4, 5, metal1)))
+graph.add(Wire(metal1w, Vertex(0, 0, metal1), Vertex(0, 1, metal1)))
+graph.add(Wire(metal1w, Vertex(4, 0, metal1), Vertex(4, 1, metal1)))
+graph.add(Wire(0.5, Vertex(0, 0, metal1), Vertex(4, 0, metal1)))
+
+graph.add(Wire(0.5, Vertex(2, 1, metal1), Vertex(2, 2, metal1)))
+graph.add(Wire(0.5, Vertex(2, 2, metal1), Vertex(2, 3, metal1)))
+
+graph.add(Wire(polyw, Vertex(1, 1, poly), Vertex(1, 2, poly)))
+graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(1, 3, poly)))
+graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(2, 2, poly)))
+graph.add(Wire(polyw, Vertex(2, 1, poly), Vertex(2, 2, poly)))
+graph.add(Wire(polyw, Vertex(2, 2, poly), Vertex(2, 3, poly)))
+
+graph.add(Wire(polyw, Vertex(2, 2, poly), Vertex(2, 3, poly)))
+
+graph.add(Via(Vertex(3, 2, poly), Vertex(3, 2, metal1), Vertex(3, 2, contact)))
+
+graph.add(Wire(0.5, Vertex(3, 2, metal1), Vertex(6, 2, metal1)))
+graph.add(Wire(0.5, Vertex(6, 1, metal1), Vertex(6, 2, metal1)))
+graph.add(Wire(0.5, Vertex(6, 2, metal1), Vertex(6, 3, metal1)))
+
+graph.add(Wire(polyw, Vertex(5, 1, poly), Vertex(5, 2, poly)))
+graph.add(Wire(polyw, Vertex(5, 2, poly), Vertex(5, 3, poly)))
+graph.add(Wire(polyw, Vertex(5, 2, poly), Vertex(7, 2, poly)))
+
+
+solver = ConstraintSolver(graph)
+solver.solve()
+
+layout = kl.Layout()
+top_cell = layout.create_cell("TOP")
+
+layers = {}
+layers[diff]    = layout.layer(2, 0)
+layers[poly]    = layout.layer(7, 0)
+layers[contact] = layout.layer(14, 0)
+layers[metal1]  = layout.layer(15, 0)
+layers[via1]    = layout.layer(16, 0)
+layers[metal2]  = layout.layer(17, 0)
+
+solver.produce(layout, top_cell, layers)
+
+layout.write("generated.gds")
 
