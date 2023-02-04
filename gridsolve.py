@@ -144,6 +144,9 @@ class MOSFETTechDefinitions(object):
   def source_drain_active_width(self):
     return 0.2
   
+  def gate_extension(self):
+    return 0.08
+  
 # @@@
 mosfet_tech_definitions = MOSFETTechDefinitions()
 
@@ -388,7 +391,8 @@ class MOSFET(Component):
     sd_width = self.mosfet_tech_definitions.source_drain_active_width()
     sd_box = kl.DBox(kl.DPoint(-0.5 * sd_width, -0.5 * self.width), kl.DPoint(0.5 * sd_width, 0.5 * self.width))
 
-    gate_box = kl.DBox(kl.DPoint(), kl.DPoint()).enlarged(0.5 * self.length, 0.5 * self.width)
+    gate_extension = self.mosfet_tech_definitions.gate_extension()
+    gate_box = kl.DBox(kl.DPoint(), kl.DPoint()).enlarged(0.5 * self.length, 0.5 * self.width + gate_extension)
 
     return [ Box(self.source_vertex.ix, self.source_vertex.iy, self.drain_vertex.ix, self.drain_vertex.iy, sd_box, self.diff_layer),
              Box(self.gate_vertex.ix, self.gate_vertex.iy, self.gate_vertex.ix, self.gate_vertex.iy, gate_box, self.poly_layer) ]
@@ -575,29 +579,31 @@ graph.add(MOSFET(Vertex(1, 1, poly), Vertex(0, 1, diff), Vertex(2, 1, diff), wn,
 graph.add(MOSFET(Vertex(3, 1, poly), Vertex(4, 1, diff), Vertex(2, 1, diff), wn, l))
 graph.add(MOSFET(Vertex(5, 1, poly), Vertex(4, 1, diff), Vertex(6, 1, diff), wn, l))
 
-graph.add(Wire(metal1w, Vertex(0, 4, metal1), Vertex(0, 5, metal1)))
-graph.add(Wire(metal1w, Vertex(4, 4, metal1), Vertex(4, 5, metal1)))
-graph.add(Wire(0.5, Vertex(0, 5, metal1), Vertex(4, 5, metal1)))
+# VDD
+graph.add(Via(Vertex(0, 3, diff), Vertex(0, 3, metal1), Vertex(0, 3, contact)))
+graph.add(Wire(metal1w, Vertex(0, 3, metal1), Vertex(0, 4, metal1)))
+graph.add(Wire(metal1w, Vertex(4, 3, metal1), Vertex(4, 4, metal1)))
+graph.add(Wire(0.5, Vertex(0, 4, metal1), Vertex(4, 4, metal1)))
+
+# VSS
 graph.add(Wire(metal1w, Vertex(0, 0, metal1), Vertex(0, 1, metal1)))
 graph.add(Wire(metal1w, Vertex(4, 0, metal1), Vertex(4, 1, metal1)))
 graph.add(Wire(0.5, Vertex(0, 0, metal1), Vertex(4, 0, metal1)))
 
-graph.add(Wire(0.5, Vertex(2, 1, metal1), Vertex(2, 2, metal1)))
-graph.add(Wire(0.5, Vertex(2, 2, metal1), Vertex(2, 3, metal1)))
+graph.add(Wire(metal1w, Vertex(2, 1, metal1), Vertex(2, 2, metal1)))
+graph.add(Wire(metal1w, Vertex(2, 2, metal1), Vertex(2, 3, metal1)))
 
 graph.add(Wire(polyw, Vertex(1, 1, poly), Vertex(1, 2, poly)))
 graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(1, 3, poly)))
-graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(2, 2, poly)))
-graph.add(Wire(polyw, Vertex(2, 1, poly), Vertex(2, 2, poly)))
-graph.add(Wire(polyw, Vertex(2, 2, poly), Vertex(2, 3, poly)))
+graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(3, 2, poly)))
+graph.add(Wire(polyw, Vertex(3, 1, poly), Vertex(3, 2, poly)))
+graph.add(Wire(polyw, Vertex(3, 2, poly), Vertex(3, 3, poly)))
 
-graph.add(Wire(polyw, Vertex(2, 2, poly), Vertex(2, 3, poly)))
+graph.add(Via(Vertex(3, 2, poly), Vertex(3, 2, metal1), Vertex(3, 2, via1)))
 
-graph.add(Via(Vertex(3, 2, poly), Vertex(3, 2, metal1), Vertex(3, 2, contact)))
-
-graph.add(Wire(0.5, Vertex(3, 2, metal1), Vertex(6, 2, metal1)))
-graph.add(Wire(0.5, Vertex(6, 1, metal1), Vertex(6, 2, metal1)))
-graph.add(Wire(0.5, Vertex(6, 2, metal1), Vertex(6, 3, metal1)))
+graph.add(Wire(metal1w, Vertex(3, 2, metal1), Vertex(6, 2, metal1)))
+graph.add(Wire(metal1w, Vertex(6, 1, metal1), Vertex(6, 2, metal1)))
+graph.add(Wire(metal1w, Vertex(6, 2, metal1), Vertex(6, 3, metal1)))
 
 graph.add(Wire(polyw, Vertex(5, 1, poly), Vertex(5, 2, poly)))
 graph.add(Wire(polyw, Vertex(5, 2, poly), Vertex(5, 3, poly)))
