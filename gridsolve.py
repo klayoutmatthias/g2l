@@ -22,15 +22,17 @@ class TechRules(object):
     # 5: metal2
 
     if layer1 == 0 and layer2 == 0:
-      return 0.2   # diff space
+      return 0.4   # diff space
     elif layer1 == 1 and layer2 == 1:
       return 0.2   # poly space
     elif layer1 == 1 and layer2 == 2:
       return 0.05  # poly/contact space
+    elif layer1 == 0 and layer2 == 2:
+      return 0.10  # poly/diff space
     elif layer1 == 2 and layer2 == 2:
-      return 0.2   # contact space
+      return 0.14  # contact space
     elif layer1 == 3 and layer2 == 3:
-      return 0.2   # metal1 space
+      return 0.17  # metal1 space
     elif layer1 == 4 and layer2 == 4:
       return 0.2   # via1 space
     elif layer1 == 5 and layer2 == 5:
@@ -163,7 +165,7 @@ class MOSFETTechDefinitions(object):
     return 0.05
 
   def source_drain_active_width(self):
-    return 0.2
+    return 0.25
   
   def gate_extension(self):
     return 0.08
@@ -196,6 +198,30 @@ class Box(object):
     self.iy2 = iy2
     self.layer = layer
     self.box = box
+
+  def ixy1(self, h):
+    return self.ix1 if h else self.iy1
+
+  def iyx1(self, h):
+    return self.iy1 if h else self.ix1
+
+  def ixy2(self, h):
+    return self.ix2 if h else self.iy2
+
+  def iyx2(self, h):
+    return self.iy2 if h else self.ix2
+
+  def xymin(self, h):
+    return self.box.left if h else self.box.bottom
+
+  def yxmin(self, h):
+    return self.box.bottom if h else self.box.left
+
+  def xymax(self, h):
+    return self.box.right if h else self.box.top
+
+  def yxmax(self, h):
+    return self.box.top if h else self.box.right
 
   def __repr__(self):
     return f"{self.ix1}/{self.iy1}..{self.ix2}/{self.iy2} layer={self.layer} box={str(self.box)}"
@@ -454,8 +480,8 @@ class ConstraintSolver(object):
       xc = self.x_coordinates.copy()
       yc = self.y_coordinates.copy()
 
-      self.compute_coordinates_h()
-      self.compute_coordinates_v()
+      self.compute_coordinates(True)
+      self.compute_coordinates(False)
 
       niter += 1
       delta = self.diff(xc, self.x_coordinates) + self.diff(yc, self.y_coordinates)
@@ -484,17 +510,35 @@ class ConstraintSolver(object):
     return d
 
 
-  def compute_coordinates_h(self):
+  def box_is_shielded(self, b, wrt, other_boxes, h):
+
+    iyx1 = max(b.iyx1(h), wrt.iyx1(h))
+    iyx2 = min(b.iyx2(h), wrt.iyx2(h))
+    yxmin = max(b.yxmin(h), wrt.yxmin(h))
+    yxmax = min(b.yxmax(h), wrt.yxmax(h))
+
+    for ob in other_boxes:
+      if ob.iyx1(h) > iyx1 or ob.iyx2(h) < iyx2 or (b.layer != ob.layer and wrt.layer != ob.layer) or ob.ixy2(h) < b.ixy1(h):
+        continue
+      if ob.yxmin(h) > yxmin + 1e-10 or ob.yxmax(h) < yxmax - 1e-10:
+        continue
+      return True
+
+    return False
+        
+
+  def compute_coordinates(self, h):
 
     prev_boxes = []
+    min_coord = 0.0
 
-    for i in self.ix:
+    for i in (self.ix if h else self.iy):
 
       current_boxes = []
-      for j in self.iy:
-        for c in self.graph.components_for_vertex(( i, j )):
+      for j in (self.iy if h else self.ix):
+        for c in self.graph.components_for_vertex((i, j) if h else (j, i)):
           for b in c.boxes(self.graph):
-            if b.ix1 == i:
+            if b.ixy1(h) == i:
               current_boxes.append(b)
 
       if len(current_boxes) > 0:
@@ -503,30 +547,20 @@ class ConstraintSolver(object):
 
         # NOTE: this is rather brute force - the complexity boils down to O(2)
         for cb in current_boxes:
-          if self.box_is_shielded_h(cb, prev_boxes):
-            continue
           for pb in prev_boxes:
             space = self.tech_rules.space(min(pb.layer, cb.layer), max(pb.layer, cb.layer))
             if space is not None:
-              coord = self.compute_coord_h(space, pb, cb)
-              if coord is not None and coord > min_coord:
+              coord = self.compute_coord_h(space, pb, cb) if h else self.compute_coord_v(space, pb, cb)
+              if coord is not None and coord > min_coord and not self.box_is_shielded(cb, pb, prev_boxes, h):
                 min_coord = coord
 
-      self.x_coordinates[i] = min_coord
+      if h:
+        self.x_coordinates[i] = min_coord
+      else:
+        self.y_coordinates[i] = min_coord
 
       prev_boxes += current_boxes
 
-  def box_is_shielded_h(self, b, other_boxes):
-
-    for ob in other_boxes:
-      if ob.iy1 > b.iy1 or ob.iy2 < b.iy2 or b.layer != ob.layer or ob.ix2 < b.ix1:
-        continue
-      if ob.box.bottom > b.box.bottom + 1e-10 or ob.box.top < b.box.top - 1e-10:
-        continue
-      return True
-
-    return False
-        
   def compute_coord_h(self, space, b1, b2):
 
     if b1.ix2 >= b2.ix1:
@@ -543,53 +577,6 @@ class ConstraintSolver(object):
     
     return dbox1.right - dbox2.left
 
-  def compute_coordinates_v(self):
-
-    prev_boxes = []
-
-    for i in self.iy:
-
-      current_boxes = []
-      for j in self.ix:
-        for c in self.graph.components_for_vertex(( j, i )):
-          for b in c.boxes(self.graph):
-            if b.iy1 == i:
-              current_boxes.append(b)
-
-      if len(current_boxes) > 0:
-
-        min_coord = 0.0
-
-        # NOTE: this is rather brute force
-        for cb in current_boxes:
-          for pb in prev_boxes:
-            space = self.tech_rules.space(min(pb.layer, cb.layer), max(pb.layer, cb.layer))
-            if space is not None:
-              coord = self.compute_coord_v(space, pb, cb)
-              if coord is not None and coord > min_coord and not self.box_is_shielded_v(cb, pb, prev_boxes):
-                min_coord = coord
-
-      self.y_coordinates[i] = min_coord
-
-      prev_boxes += current_boxes
-
-  def box_is_shielded_v(self, b, wrt, other_boxes):
-
-    ix1 = max(b.ix1, wrt.ix1)
-    ix2 = min(b.ix2, wrt.ix2)
-    left = max(b.box.left, wrt.box.left)
-    right = max(b.box.right, wrt.box.right)
-
-    for ob in other_boxes:
-      if ob.ix1 > ix1 or ob.ix2 < ix2 or b.layer != ob.layer or ob.iy2 < b.iy1:
-        continue
-      if ob.box.left > left + 1e-10 or ob.box.right < right - 1e-10:
-        continue
-      return True
-
-    return False
-        
-        
   def compute_coord_v(self, space, b1, b2):
 
     if b1.iy2 >= b2.iy1:
@@ -625,17 +612,19 @@ metal2w = 0.2
 polyw = 0.13
 
 l = 0.13
+wpo = 1.3
+wno = 0.9
 wp = 0.9
 wn = 0.6
 
 graph = Graph()
 
 # output stage (n=2) pmos
-graph.add(MOSFET(Vertex(1, 3, poly), Vertex(0, 3, diff), Vertex(2, 3, diff), wp, l))
-graph.add(MOSFET(Vertex(3, 3, poly), Vertex(4, 3, diff), Vertex(2, 3, diff), wp, l))
+graph.add(MOSFET(Vertex(1, 3, poly), Vertex(0, 3, diff), Vertex(2, 3, diff), wpo, l))
+graph.add(MOSFET(Vertex(3, 3, poly), Vertex(4, 3, diff), Vertex(2, 3, diff), wpo, l))
 # output stage (n=2) nmos
-graph.add(MOSFET(Vertex(1, 1, poly), Vertex(0, 1, diff), Vertex(2, 1, diff), wn, l))
-graph.add(MOSFET(Vertex(3, 1, poly), Vertex(4, 1, diff), Vertex(2, 1, diff), wn, l))
+graph.add(MOSFET(Vertex(1, 1, poly), Vertex(0, 1, diff), Vertex(2, 1, diff), wno, l))
+graph.add(MOSFET(Vertex(3, 1, poly), Vertex(4, 1, diff), Vertex(2, 1, diff), wno, l))
 
 # input stage pmos
 graph.add(MOSFET(Vertex(6, 3, poly), Vertex(4, 3, diff), Vertex(7, 3, diff), wp, l))
@@ -674,6 +663,8 @@ graph.add(Wire(polyw, Vertex(3, 2, poly), Vertex(5, 2, poly)))
 graph.add(Via(Vertex(5, 2, poly), Vertex(5, 2, metal1), Vertex(5, 2, contact)))
 
 # input stage to output stage input m1
+graph.add(Via(Vertex(7, 3, diff), Vertex(7, 3, metal1), Vertex(7, 3, contact)))
+graph.add(Via(Vertex(7, 1, diff), Vertex(7, 1, metal1), Vertex(7, 1, contact)))
 graph.add(Wire(metal1w, Vertex(5, 2, metal1), Vertex(7, 2, metal1)))
 graph.add(Wire(metal1w, Vertex(7, 1, metal1), Vertex(7, 2, metal1)))
 graph.add(Wire(metal1w, Vertex(7, 2, metal1), Vertex(7, 3, metal1)))
