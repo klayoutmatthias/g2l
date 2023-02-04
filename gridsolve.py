@@ -177,18 +177,24 @@ mosfet_tech_definitions = MOSFETTechDefinitions()
 
 # -------------------------------------------------------------
 
-# a grid vertex
-class Vertex(object):
+# A grid node
+
+class Node(object):
   
-  def __init__(self, ix, iy, layer):
+  def __init__(self, ix, iy):
     self.ix = ix
     self.iy = iy
-    self.layer = layer
 
   def ixy(self):
     return (self.ix, self.iy)
 
-# a geometrical box
+# A shortcut to generate a node
+
+def n(ix, iy):
+  return Node(ix, iy)
+
+# A geometrical box
+
 class Box(object):
   
   def __init__(self, ix1, iy1, ix2, iy2, box, layer):
@@ -199,28 +205,28 @@ class Box(object):
     self.layer = layer
     self.box = box
 
-  def ixy1(self, h):
+  def ixory1(self, h):
     return self.ix1 if h else self.iy1
 
-  def iyx1(self, h):
+  def iyorx1(self, h):
     return self.iy1 if h else self.ix1
 
-  def ixy2(self, h):
+  def ixory2(self, h):
     return self.ix2 if h else self.iy2
 
-  def iyx2(self, h):
+  def iyorx2(self, h):
     return self.iy2 if h else self.ix2
 
-  def xymin(self, h):
+  def xorymin(self, h):
     return self.box.left if h else self.box.bottom
 
-  def yxmin(self, h):
+  def yorxmin(self, h):
     return self.box.bottom if h else self.box.left
 
-  def xymax(self, h):
+  def xorymax(self, h):
     return self.box.right if h else self.box.top
 
-  def yxmax(self, h):
+  def yorxmax(self, h):
     return self.box.top if h else self.box.right
 
   def __repr__(self):
@@ -254,15 +260,10 @@ class Graph(object):
 
     self.components.append(component)
 
-    for v in component.vertexes():
+    for v in component.nodes():
 
       self.x_indexes.add(v.ix)
       self.y_indexes.add(v.iy)
-
-      if not v.layer in self.components_per_layer:
-        self.components_per_layer[v.layer] = [component]
-      else:
-        self.components_per_layer[v.layer].append(component)
 
       ixy = v.ixy()
       if not ixy in self.components_per_index:
@@ -270,7 +271,15 @@ class Graph(object):
       else:
         self.components_per_index[ixy].append(component)
 
-  def components_for_vertex(self, ixy):
+    for l in component.layers():
+
+      if not l in self.components_per_layer:
+        self.components_per_layer[l] = [component]
+      else:
+        self.components_per_layer[l].append(component)
+
+
+  def components_for_node(self, ixy):
     if ixy not in self.components_per_index:
       return []
     else:
@@ -283,17 +292,23 @@ class Component(object):
   def __init__(self):
     pass
 
-  def vertexes(self):
+  def nodes(self):
     return []
+
+  def layers(self):
+    return {}
 
   def boxes(self, graph):
     return []
 
-  def layer(self):
-    return self.vertexes()[0].layer;
+  def via_bottom_layer(self):
+    return None
+
+  def via_top_layer(self):
+    return None
 
   def is_horizontal(self):
-    return self.vertexes()[0].iy == self.vertexes()[-1].iy;
+    return self.nodes()[0].iy == self.nodes()[-1].iy;
 
   # default implementation, based on the outline boxes
   def geometry(self, graph, x_coordinates, y_coordinates):
@@ -306,31 +321,41 @@ class Component(object):
 # a wire implementation
 class Wire(Component):
 
-  def __init__(self, width, v1, v2):
+  def __init__(self, width, layer, v1, v2):
     # TODO: assert that v1.layer == v2.layer and v1.ix == v2.ix || v1.iy == v2.iy
     if v1.ix > v2.ix or v1.iy > v2.iy:
       (self.v1, self.v2) = (v2, v1)
     else:
       (self.v1, self.v2) = (v1, v2)
     self.width = width
+    self.layer = layer
 
-  def vertexes(self):
+  def layers(self):
+    return [ self.layer ]
+
+  def via_bottom_layer(self):
+    return self.layer
+
+  def via_top_layer(self):
+    return self.layer
+
+  def nodes(self):
     return [ self.v1, self.v2 ]
 
   def boxes(self, graph):
-    box1 = self.min_box_per_vertex(graph, self.v1)
-    box2 = self.min_box_per_vertex(graph, self.v2)
+    box1 = self.min_box_per_node(graph, self.v1)
+    box2 = self.min_box_per_node(graph, self.v2)
     if self.is_horizontal():
       wire_box = kl.DBox(kl.DPoint(box1.left, -0.5 * self.width), kl.DPoint(box2.right, 0.5 * self.width))
     else:
       wire_box = kl.DBox(kl.DPoint(-0.5 * self.width, box1.bottom), kl.DPoint(0.5 * self.width, box2.top))
-    return [ Box(self.v1.ix, self.v1.iy, self.v2.ix, self.v2.iy, wire_box, self.layer()) ]
+    return [ Box(self.v1.ix, self.v1.iy, self.v2.ix, self.v2.iy, wire_box, self.layer) ]
 
   # computes the minimum box as imposed by perpendicular wires
-  def min_box_per_vertex(self, graph, v):
+  def min_box_per_node(self, graph, v):
     box = kl.DBox(0, 0, 0, 0)
-    for c in graph.components_for_vertex(v.ixy()):
-      if type(c) is Wire and c.layer() == self.layer():
+    for c in graph.components_for_node(v.ixy()):
+      if type(c) is Wire and c.layer in self.layers():
         if c.is_horizontal():
           box += kl.DBox(0, -0.5 * c.width, 0, 0.5 * c.width)
         else:
@@ -340,44 +365,47 @@ class Wire(Component):
 
 class Via(Component):
   
-  def __init__(self, bottom_vertex, top_vertex, via_vertex):
-    # TODO: assert that bottom_vertex.ixy() == top_vertex.ixy() == via_vertex.ixy()
-    self.bottom_vertex = bottom_vertex
-    self.top_vertex = top_vertex
-    self.via_vertex = via_vertex
+  def __init__(self, node, bottom_layer, via_layer, top_layer):
+    self.node = node
+    self.bottom_layer = bottom_layer
+    self.via_layer = via_layer
+    self.top_layer = top_layer
     self.via_tech_definitions = via_tech_definitions
 
-  def vertexes(self):
-    return [ self.bottom_vertex, self.top_vertex ]
+  def nodes(self):
+    return [ self.node ]
+
+  def layers(self):
+    return [ self.bottom_layer, self.via_layer, self.top_layer ]
 
   # for the boxes we use a summarized definition of the farm vias
   def boxes(self, graph):
 
     widths = self.get_widths(graph)
 
-    (bbox, vbox, tbox) = self.via_tech_definitions.boxes(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
+    (bbox, vbox, tbox) = self.via_tech_definitions.boxes(self.bottom_layer, self.top_layer, widths[0], widths[1])
 
-    v = self.bottom_vertex
+    v = self.node
 
-    return [ Box(v.ix, v.iy, v.ix, v.iy, bbox, self.bottom_vertex.layer), 
-             Box(v.ix, v.iy, v.ix, v.iy, tbox, self.top_vertex.layer),
-             Box(v.ix, v.iy, v.ix, v.iy, vbox, self.via_vertex.layer) ]
+    return [ Box(v.ix, v.iy, v.ix, v.iy, bbox, self.bottom_layer), 
+             Box(v.ix, v.iy, v.ix, v.iy, vbox, self.via_layer),
+             Box(v.ix, v.iy, v.ix, v.iy, tbox, self.top_layer) ]
 
   # for the geometry we use the detailed geometry with the farm vias
   def geometry(self, graph, x_coordinates, y_coordinates):
 
     widths = self.get_widths(graph)
 
-    (bbox, unused, tbox) = self.via_tech_definitions.boxes(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
-    detailed_vboxes = self.via_tech_definitions.via_geometry(self.bottom_vertex.layer, self.top_vertex.layer, widths[0], widths[1])
+    (bbox, unused, tbox) = self.via_tech_definitions.boxes(self.bottom_layer, self.top_layer, widths[0], widths[1])
+    detailed_vboxes = self.via_tech_definitions.via_geometry(self.bottom_layer, self.top_layer, widths[0], widths[1])
 
-    v = self.bottom_vertex
+    v = self.node
 
-    geometry = [ Box(v.ix, v.iy, v.ix, v.iy, bbox, self.bottom_vertex.layer), 
-                 Box(v.ix, v.iy, v.ix, v.iy, tbox, self.top_vertex.layer) ]
+    geometry = [ Box(v.ix, v.iy, v.ix, v.iy, bbox, self.bottom_layer), 
+                 Box(v.ix, v.iy, v.ix, v.iy, tbox, self.top_layer) ]
 
     for vbox in detailed_vboxes:
-      geometry.append(Box(v.ix, v.iy, v.ix, v.iy, vbox, self.via_vertex.layer))
+      geometry.append(Box(v.ix, v.iy, v.ix, v.iy, vbox, self.via_layer))
 
     return self.geometry_for_boxes(x_coordinates, y_coordinates, geometry)
 
@@ -386,26 +414,25 @@ class Via(Component):
     widths = [ [ None, None, None, None ], [ None, None, None, None ] ]
 
     # analyze wires
-    for c in graph.components_for_vertex(self.via_vertex.ixy()):
-      if type(c) is Wire or type(c) is MOSFET:  # @@@ directed element type
-        li = -1
-        if c.layer() == self.bottom_vertex.layer:
-          li = 0
-        elif c.layer() == self.top_vertex.layer:
-          li = 1
-        if li >= 0:
-          widths[li][self.direction_index(c)] = c.width
+    for c in graph.components_for_node(self.node.ixy()):
+      li = -1
+      if c.via_bottom_layer() == self.bottom_layer:
+        li = 0
+      elif c.via_top_layer() == self.top_layer:
+        li = 1
+      if li >= 0:
+        widths[li][self.direction_index(c)] = c.width
 
     return widths
 
   def direction_index(self, component):
     if component.is_horizontal():
-      if component.vertexes()[0].ix < self.bottom_vertex.ix:
+      if component.nodes()[0].ix < self.node.ix:
         return 0
       else:
         return 2
     else:
-      if component.vertexes()[0].iy < self.bottom_vertex.iy:
+      if component.nodes()[0].iy < self.node.iy:
         return 1
       else:
         return 3
@@ -413,28 +440,33 @@ class Via(Component):
 
 class MOSFET(Component):
 
-  def __init__(self, gate_vertex, source_vertex, drain_vertex, width, length):
+  def __init__(self, gate_node, source_node, drain_node, poly_layer, diff_layer, width, length):
 
-    # TODO: assert that gate_vertex.iy == source_vertex.iy and gate_vertex.iy == drain_vertex.iy
+    # TODO: assert that gate_node.iy == source_node.iy and gate_node.iy == drain_node.iy
     # (or generalize for horizontal orientation)
-    self.gate_vertex = gate_vertex
+    self.gate_node = gate_node
 
     # normalize "source" to be left
-    if source_vertex.ix < drain_vertex.ix:
-      (self.source_vertex, self.drain_vertex) = (source_vertex, drain_vertex)
+    if source_node.ix < drain_node.ix:
+      (self.source_node, self.drain_node) = (source_node, drain_node)
     else:
-      (self.source_vertex, self.drain_vertex) = (drain_vertex, source_vertex)
+      (self.source_node, self.drain_node) = (drain_node, source_node)
 
     self.width = width
     self.length = length
-    # @@@ redundant
-    self.poly_layer = self.gate_vertex.layer
-    self.diff_layer = self.source_vertex.layer
+    self.poly_layer = poly_layer
+    self.diff_layer = diff_layer
 
     self.mosfet_tech_definitions = mosfet_tech_definitions
 
-  def vertexes(self):
-    return [ self.source_vertex, self.gate_vertex, self.drain_vertex ]
+  def nodes(self):
+    return [ self.source_node, self.gate_node, self.drain_node ]
+
+  def layers(self):
+    return [ self.diff_layer, self.poly_layer ]
+
+  def via_bottom_layer(self):
+    return self.diff_layer
 
   def boxes(self, graph):
 
@@ -444,8 +476,8 @@ class MOSFET(Component):
     gate_extension = self.mosfet_tech_definitions.gate_extension()
     gate_box = kl.DBox(kl.DPoint(), kl.DPoint()).enlarged(0.5 * self.length, 0.5 * self.width + gate_extension)
 
-    return [ Box(self.source_vertex.ix, self.source_vertex.iy, self.drain_vertex.ix, self.drain_vertex.iy, sd_box, self.diff_layer),
-             Box(self.gate_vertex.ix, self.gate_vertex.iy, self.gate_vertex.ix, self.gate_vertex.iy, gate_box, self.poly_layer) ]
+    return [ Box(self.source_node.ix, self.source_node.iy, self.drain_node.ix, self.drain_node.iy, sd_box, self.diff_layer),
+             Box(self.gate_node.ix, self.gate_node.iy, self.gate_node.ix, self.gate_node.iy, gate_box, self.poly_layer) ]
 
 
 class ConstraintSolver(object):
@@ -519,9 +551,9 @@ class ConstraintSolver(object):
 
       current_boxes = []
       for j in (self.iy if h else self.ix):
-        for c in self.graph.components_for_vertex((i, j) if h else (j, i)):
+        for c in self.graph.components_for_node((i, j) if h else (j, i)):
           for b in c.boxes(self.graph):
-            if b.ixy1(h) == i:
+            if b.ixory1(h) == i:
               current_boxes.append(b)
 
       if len(current_boxes) > 0:
@@ -546,15 +578,15 @@ class ConstraintSolver(object):
 
   def box_is_shielded(self, b, wrt, other_boxes, h):
 
-    iyx1 = max(b.iyx1(h), wrt.iyx1(h))
-    iyx2 = min(b.iyx2(h), wrt.iyx2(h))
-    yxmin = max(b.yxmin(h), wrt.yxmin(h))
-    yxmax = min(b.yxmax(h), wrt.yxmax(h))
+    iyorx1 = max(b.iyorx1(h), wrt.iyorx1(h))
+    iyorx2 = min(b.iyorx2(h), wrt.iyorx2(h))
+    yorxmin = max(b.yorxmin(h), wrt.yorxmin(h))
+    yorxmax = min(b.yorxmax(h), wrt.yorxmax(h))
 
     for ob in other_boxes:
-      if ob.iyx1(h) > iyx1 or ob.iyx2(h) < iyx2 or (b.layer != ob.layer and wrt.layer != ob.layer) or ob.ixy2(h) < b.ixy1(h):
+      if ob.iyorx1(h) > iyorx1 or ob.iyorx2(h) < iyorx2 or (b.layer != ob.layer and wrt.layer != ob.layer) or ob.ixory2(h) < b.ixory1(h):
         continue
-      if ob.yxmin(h) > yxmin + 1e-10 or ob.yxmax(h) < yxmax - 1e-10:
+      if ob.yorxmin(h) > yorxmin + 1e-10 or ob.yorxmax(h) < yorxmax - 1e-10:
         continue
       return True
 
@@ -625,61 +657,61 @@ wn = 0.6
 graph = Graph()
 
 # output stage (n=2) pmos
-graph.add(MOSFET(Vertex(1, 3, poly), Vertex(0, 3, diff), Vertex(2, 3, diff), wpo, l))
-graph.add(MOSFET(Vertex(3, 3, poly), Vertex(4, 3, diff), Vertex(2, 3, diff), wpo, l))
+graph.add(MOSFET(n(1, 3), n(0, 3), n(2, 3), poly, diff, wpo, l))
+graph.add(MOSFET(n(3, 3), n(4, 3), n(2, 3), poly, diff, wpo, l))
 # output stage (n=2) nmos
-graph.add(MOSFET(Vertex(1, 1, poly), Vertex(0, 1, diff), Vertex(2, 1, diff), wno, l))
-graph.add(MOSFET(Vertex(3, 1, poly), Vertex(4, 1, diff), Vertex(2, 1, diff), wno, l))
+graph.add(MOSFET(n(1, 1), n(0, 1), n(2, 1), poly, diff, wno, l))
+graph.add(MOSFET(n(3, 1), n(4, 1), n(2, 1), poly, diff, wno, l))
 
 # input stage pmos
-graph.add(MOSFET(Vertex(6, 3, poly), Vertex(4, 3, diff), Vertex(7, 3, diff), wp, l))
+graph.add(MOSFET(n(6, 3), n(4, 3), n(7, 3), poly, diff, wp, l))
 # input stage nmos
-graph.add(MOSFET(Vertex(6, 1, poly), Vertex(4, 1, diff), Vertex(7, 1, diff), wn, l))
+graph.add(MOSFET(n(6, 1), n(4, 1), n(7, 1), poly, diff, wn, l))
 
 # VDD
-graph.add(Via(Vertex(0, 3, diff), Vertex(0, 3, metal1), Vertex(0, 3, contact)))
-graph.add(Via(Vertex(4, 3, diff), Vertex(4, 3, metal1), Vertex(4, 3, contact)))
-graph.add(Wire(metal1w, Vertex(0, 3, metal1), Vertex(0, 4, metal1)))
-graph.add(Wire(metal1w, Vertex(4, 3, metal1), Vertex(4, 4, metal1)))
-graph.add(Wire(0.5, Vertex(0, 4, metal1), Vertex(4, 4, metal1)))
+graph.add(Via(n(0, 3), diff, contact, metal1))
+graph.add(Via(n(4, 3), diff, contact, metal1))
+graph.add(Wire(metal1w, metal1, n(0, 3), n(0, 4)))
+graph.add(Wire(metal1w, metal1, n(4, 3), n(4, 4)))
+graph.add(Wire(0.5, metal1, n(0, 4), n(4, 4)))
 
 # VSS
-graph.add(Via(Vertex(0, 1, diff), Vertex(0, 1, metal1), Vertex(0, 1, contact)))
-graph.add(Via(Vertex(4, 1, diff), Vertex(4, 1, metal1), Vertex(4, 1, contact)))
-graph.add(Wire(metal1w, Vertex(0, 0, metal1), Vertex(0, 1, metal1)))
-graph.add(Wire(metal1w, Vertex(4, 0, metal1), Vertex(4, 1, metal1)))
-graph.add(Wire(0.5, Vertex(0, 0, metal1), Vertex(4, 0, metal1)))
+graph.add(Via(n(0, 1), diff, contact, metal1))
+graph.add(Via(n(4, 1), diff, contact, metal1))
+graph.add(Wire(metal1w, metal1, n(0, 0), n(0, 1)))
+graph.add(Wire(metal1w, metal1, n(4, 0), n(4, 1)))
+graph.add(Wire(0.5, metal1, n(0, 0), n(4, 0)))
 
 # output
-graph.add(Via(Vertex(2, 3, diff), Vertex(2, 3, metal1), Vertex(2, 3, contact)))
-graph.add(Via(Vertex(2, 1, diff), Vertex(2, 1, metal1), Vertex(2, 1, contact)))
-graph.add(Wire(metal1w, Vertex(2, 1, metal1), Vertex(2, 2, metal1)))
-graph.add(Wire(metal1w, Vertex(2, 2, metal1), Vertex(2, 3, metal1)))
+graph.add(Via(n(2, 3), diff, contact, metal1))
+graph.add(Via(n(2, 1), diff, contact, metal1))
+graph.add(Wire(metal1w, metal1, n(2, 1), n(2, 2)))
+graph.add(Wire(metal1w, metal1, n(2, 2), n(2, 3)))
 
 # output stage gate wiring
-graph.add(Wire(polyw, Vertex(1, 1, poly), Vertex(1, 2, poly)))
-graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(1, 3, poly)))
-graph.add(Wire(polyw, Vertex(3, 1, poly), Vertex(3, 2, poly)))
-graph.add(Wire(polyw, Vertex(3, 2, poly), Vertex(3, 3, poly)))
-graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(3, 2, poly)))
-graph.add(Wire(polyw, Vertex(3, 2, poly), Vertex(5, 2, poly)))
+graph.add(Wire(polyw, poly, n(1, 1), n(1, 2)))
+graph.add(Wire(polyw, poly, n(1, 2), n(1, 3)))
+graph.add(Wire(polyw, poly, n(3, 1), n(3, 2)))
+graph.add(Wire(polyw, poly, n(3, 2), n(3, 3)))
+graph.add(Wire(polyw, poly, n(1, 2), n(3, 2)))
+graph.add(Wire(polyw, poly, n(3, 2), n(5, 2)))
 
 # output stage gate to m1
-graph.add(Via(Vertex(5, 2, poly), Vertex(5, 2, metal1), Vertex(5, 2, contact)))
+graph.add(Via(n(5, 2), poly, contact, metal1))
 
 # input stage to output stage input m1
-graph.add(Via(Vertex(7, 3, diff), Vertex(7, 3, metal1), Vertex(7, 3, contact)))
-graph.add(Via(Vertex(7, 1, diff), Vertex(7, 1, metal1), Vertex(7, 1, contact)))
-graph.add(Wire(metal1w, Vertex(5, 2, metal1), Vertex(7, 2, metal1)))
-graph.add(Wire(metal1w, Vertex(7, 1, metal1), Vertex(7, 2, metal1)))
-graph.add(Wire(metal1w, Vertex(7, 2, metal1), Vertex(7, 3, metal1)))
+graph.add(Via(n(7, 3), diff, contact, metal1))
+graph.add(Via(n(7, 1), diff, contact, metal1))
+graph.add(Wire(metal1w, metal1, n(5, 2), n(7, 2)))
+graph.add(Wire(metal1w, metal1, n(7, 1), n(7, 2)))
+graph.add(Wire(metal1w, metal1, n(7, 2), n(7, 3)))
 
 # input stage gate wiring
-graph.add(Wire(polyw, Vertex(6, 1, poly), Vertex(6, 2, poly)))
-graph.add(Wire(polyw, Vertex(6, 2, poly), Vertex(6, 3, poly)))
+graph.add(Wire(polyw, poly, n(6, 1), n(6, 2)))
+graph.add(Wire(polyw, poly, n(6, 2), n(6, 3)))
 
 # input pin
-graph.add(Wire(polyw, Vertex(6, 2, poly), Vertex(8, 2, poly)))
+graph.add(Wire(polyw, poly, n(6, 2), n(8, 2)))
 
 
 solver = ConstraintSolver(graph)
