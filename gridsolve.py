@@ -510,23 +510,6 @@ class ConstraintSolver(object):
     return d
 
 
-  def box_is_shielded(self, b, wrt, other_boxes, h):
-
-    iyx1 = max(b.iyx1(h), wrt.iyx1(h))
-    iyx2 = min(b.iyx2(h), wrt.iyx2(h))
-    yxmin = max(b.yxmin(h), wrt.yxmin(h))
-    yxmax = min(b.yxmax(h), wrt.yxmax(h))
-
-    for ob in other_boxes:
-      if ob.iyx1(h) > iyx1 or ob.iyx2(h) < iyx2 or (b.layer != ob.layer and wrt.layer != ob.layer) or ob.ixy2(h) < b.ixy1(h):
-        continue
-      if ob.yxmin(h) > yxmin + 1e-10 or ob.yxmax(h) < yxmax - 1e-10:
-        continue
-      return True
-
-    return False
-        
-
   def compute_coordinates(self, h):
 
     prev_boxes = []
@@ -550,7 +533,7 @@ class ConstraintSolver(object):
           for pb in prev_boxes:
             space = self.tech_rules.space(min(pb.layer, cb.layer), max(pb.layer, cb.layer))
             if space is not None:
-              coord = self.compute_coord_h(space, pb, cb) if h else self.compute_coord_v(space, pb, cb)
+              coord = self.compute_coord(space, pb, cb, h)
               if coord is not None and coord > min_coord and not self.box_is_shielded(cb, pb, prev_boxes, h):
                 min_coord = coord
 
@@ -560,6 +543,28 @@ class ConstraintSolver(object):
         self.y_coordinates[i] = min_coord
 
       prev_boxes += current_boxes
+
+  def box_is_shielded(self, b, wrt, other_boxes, h):
+
+    iyx1 = max(b.iyx1(h), wrt.iyx1(h))
+    iyx2 = min(b.iyx2(h), wrt.iyx2(h))
+    yxmin = max(b.yxmin(h), wrt.yxmin(h))
+    yxmax = min(b.yxmax(h), wrt.yxmax(h))
+
+    for ob in other_boxes:
+      if ob.iyx1(h) > iyx1 or ob.iyx2(h) < iyx2 or (b.layer != ob.layer and wrt.layer != ob.layer) or ob.ixy2(h) < b.ixy1(h):
+        continue
+      if ob.yxmin(h) > yxmin + 1e-10 or ob.yxmax(h) < yxmax - 1e-10:
+        continue
+      return True
+
+    return False
+
+  def compute_coord(self, space, b1, b2, h):
+    if h:
+      return self.compute_coord_h(space, b1, b2)
+    else:
+      return self.compute_coord_v(space, b1, b2)
 
   def compute_coord_h(self, space, b1, b2):
 
