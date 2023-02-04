@@ -15,8 +15,8 @@ class TechRules(object):
 
     # @@@ demo, functional layers are:
     # 0: diff
-    # 1: poly
-    # 2: contact
+    # 1: contact
+    # 2: poly
     # 3: metal1
     # 4: via1
     # 5: metal2
@@ -73,7 +73,8 @@ class ViaTechDefinitions(object):
 
     (bbox, tbox) = self.top_bottom_boxes(bottom_layer, top_layer, bottom_widths, top_widths)
 
-    # for efficiency, we don't produce each single via, but just a common box
+    # For efficiency, we don't produce each single via, but just a common box on the cut layer
+    # we will later replace the common box by individual boxes for the farm vias.
     vbox = kl.DBox()
     for b in self.via_geometry(bottom_layer, top_layer, bottom_widths, top_widths):
       vbox += b
@@ -96,17 +97,37 @@ class ViaTechDefinitions(object):
 
   def top_bottom_boxes(self, bottom_layer, top_layer, bottom_widths, top_widths):
 
-    # Simple demo implementation with plain enlargement
-    # @@@
-    enclosure = 0.05
+    # Simple demo implementation
+
+    top_min_dim = 0.2
+    bottom_min_dim = 0.2
+
+    if top_layer == 3:  # contact
+      top_min_dim = 0.2
+      bottom_min_dim = 0.13
     
     bw = max([ bottom_widths[i] or 0.0 for i in [1, 3] ])
-    bh = max([ bottom_widths[i] or 0.0 for i in [0, 2] ])
-    bbox = kl.DBox(-0.5 * bw, -0.5 * bh, 0.5 * bw, 0.5 * bh).enlarged(enclosure, enclosure)
-
     tw = max([ top_widths[i] or 0.0 for i in [1, 3] ])
+    if bw == 0.0:
+      bw = tw
+    if tw == 0.0:
+      tw = bw
+
+    bh = max([ bottom_widths[i] or 0.0 for i in [0, 2] ])
     th = max([ top_widths[i] or 0.0 for i in [0, 2] ])
-    tbox = kl.DBox(-0.5 * tw, -0.5 * th, 0.5 * tw, 0.5 * th).enlarged(enclosure, enclosure)
+    if bh == 0.0:
+      bh = th
+    if th == 0.0:
+      th = bh
+
+    bw = max(bw, bottom_min_dim)
+    bh = max(bh, bottom_min_dim)
+
+    tw = max(tw, top_min_dim)
+    th = max(th, top_min_dim)
+
+    bbox = kl.DBox(-0.5 * bw, -0.5 * bh, 0.5 * bw, 0.5 * bh)
+    tbox = kl.DBox(-0.5 * tw, -0.5 * th, 0.5 * tw, 0.5 * th)
 
     return (bbox, tbox)
 
@@ -176,6 +197,9 @@ class Box(object):
     self.layer = layer
     self.box = box
 
+  def __repr__(self):
+    return f"{self.ix1}/{self.iy1}..{self.ix2}/{self.iy2} layer={self.layer} box={str(self.box)}"
+
   # side is:
   # sx  sy
   # -1  0    -> left
@@ -239,6 +263,12 @@ class Component(object):
   def boxes(self, graph):
     return []
 
+  def layer(self):
+    return self.vertexes()[0].layer;
+
+  def is_horizontal(self):
+    return self.vertexes()[0].iy == self.vertexes()[-1].iy;
+
   # default implementation, based on the outline boxes
   def geometry(self, graph, x_coordinates, y_coordinates):
     return self.geometry_for_boxes(x_coordinates, y_coordinates, self.boxes(graph))
@@ -260,12 +290,6 @@ class Wire(Component):
 
   def vertexes(self):
     return [ self.v1, self.v2 ]
-
-  def layer(self):
-    return self.v1.layer;
-
-  def is_horizontal(self):
-    return self.v1.iy == self.v2.iy
 
   def boxes(self, graph):
     box1 = self.min_box_per_vertex(graph, self.v1)
@@ -333,11 +357,11 @@ class Via(Component):
 
   def get_widths(self, graph):
 
-    widths = [ [ None ] * 4 ] * 2
+    widths = [ [ None, None, None, None ], [ None, None, None, None ] ]
 
     # analyze wires
     for c in graph.components_for_vertex(self.via_vertex.ixy()):
-      if type(c) is Wire:
+      if type(c) is Wire or type(c) is MOSFET:  # @@@ directed element type
         li = -1
         if c.layer() == self.bottom_vertex.layer:
           li = 0
@@ -348,14 +372,14 @@ class Via(Component):
 
     return widths
 
-  def direction_index(self, wire):
-    if wire.is_horizontal():
-      if wire.v1.ix < self.bottom_vertex.ix:
+  def direction_index(self, component):
+    if component.is_horizontal():
+      if component.vertexes()[0].ix < self.bottom_vertex.ix:
         return 0
       else:
         return 2
     else:
-      if wire.v1.iy < self.bottom_vertex.iy:
+      if component.vertexes()[0].iy < self.bottom_vertex.iy:
         return 1
       else:
         return 3
@@ -410,7 +434,7 @@ class ConstraintSolver(object):
 
     self.tech_rules = tech_rules
 
-  def solve(self, initial_grid_x = 0.4, initial_grid_y = 0.5):
+  def solve(self, initial_grid_x = 10.0, initial_grid_y = 10.0):
 
     self.x_coordinates = {}
     self.y_coordinates = {}
@@ -455,7 +479,7 @@ class ConstraintSolver(object):
 
   def diff(self, a, b):
     d = 0.0
-    for i in range(0, len(a)):
+    for i in a.keys():
       d += math.sqrt((a[i] - b[i]) ** 2)
     return d
 
@@ -473,20 +497,35 @@ class ConstraintSolver(object):
             if b.ix1 == i:
               current_boxes.append(b)
 
-      # NOTE: this is rather brute force
-      min_coord = 0.0
-      for cb in current_boxes:
-        for pb in prev_boxes:
-          space = self.tech_rules.space(pb.layer, cb.layer)
-          if space is not None:
-            coord = self.compute_coord_h(space, pb, cb)
-            if coord is not None and coord > min_coord:
-              min_coord = coord
+      if len(current_boxes) > 0:
+
+        min_coord = 0.0
+
+        # NOTE: this is rather brute force - the complexity boils down to O(2)
+        for cb in current_boxes:
+          if self.box_is_shielded_h(cb, prev_boxes):
+            continue
+          for pb in prev_boxes:
+            space = self.tech_rules.space(min(pb.layer, cb.layer), max(pb.layer, cb.layer))
+            if space is not None:
+              coord = self.compute_coord_h(space, pb, cb)
+              if coord is not None and coord > min_coord:
+                min_coord = coord
 
       self.x_coordinates[i] = min_coord
 
       prev_boxes += current_boxes
 
+  def box_is_shielded_h(self, b, other_boxes):
+
+    for ob in other_boxes:
+      if ob.iy1 > b.iy1 or ob.iy2 < b.iy2 or b.layer != ob.layer or ob.ix2 < b.ix1:
+        continue
+      if ob.box.bottom > b.box.bottom + 1e-10 or ob.box.top < b.box.top - 1e-10:
+        continue
+      return True
+
+    return False
         
   def compute_coord_h(self, space, b1, b2):
 
@@ -498,7 +537,7 @@ class ConstraintSolver(object):
 
     dbox1 = dbox1.enlarged(space, space)
 
-    # no vertical overlap
+    # no perpendicular overlap
     if dbox1.bottom > dbox2.top - 1e-10 or dbox1.top < dbox2.bottom + 1e-10:
       return None 
     
@@ -517,20 +556,39 @@ class ConstraintSolver(object):
             if b.iy1 == i:
               current_boxes.append(b)
 
-      # NOTE: this is rather brute force
-      min_coord = 0.0
-      for cb in current_boxes:
-        for pb in prev_boxes:
-          space = self.tech_rules.space(pb.layer, cb.layer)
-          if space is not None:
-            coord = self.compute_coord_v(space, pb, cb)
-            if coord is not None and coord > min_coord:
-              min_coord = coord
+      if len(current_boxes) > 0:
+
+        min_coord = 0.0
+
+        # NOTE: this is rather brute force
+        for cb in current_boxes:
+          for pb in prev_boxes:
+            space = self.tech_rules.space(min(pb.layer, cb.layer), max(pb.layer, cb.layer))
+            if space is not None:
+              coord = self.compute_coord_v(space, pb, cb)
+              if coord is not None and coord > min_coord and not self.box_is_shielded_v(cb, pb, prev_boxes):
+                min_coord = coord
 
       self.y_coordinates[i] = min_coord
 
       prev_boxes += current_boxes
 
+  def box_is_shielded_v(self, b, wrt, other_boxes):
+
+    ix1 = max(b.ix1, wrt.ix1)
+    ix2 = min(b.ix2, wrt.ix2)
+    left = max(b.box.left, wrt.box.left)
+    right = max(b.box.right, wrt.box.right)
+
+    for ob in other_boxes:
+      if ob.ix1 > ix1 or ob.ix2 < ix2 or b.layer != ob.layer or ob.iy2 < b.iy1:
+        continue
+      if ob.box.left > left + 1e-10 or ob.box.right < right - 1e-10:
+        continue
+      return True
+
+    return False
+        
         
   def compute_coord_v(self, space, b1, b2):
 
@@ -542,7 +600,7 @@ class ConstraintSolver(object):
 
     dbox1 = dbox1.enlarged(space, space)
 
-    # no vertical overlap
+    # no perpendicular overlap
     if dbox1.left > dbox2.right - 1e-10 or dbox1.right < dbox2.left + 1e-10:
       return None 
     
@@ -567,47 +625,65 @@ metal2w = 0.2
 polyw = 0.13
 
 l = 0.13
-wp = 0.6
-wn = 0.4
+wp = 0.9
+wn = 0.6
 
 graph = Graph()
 
+# output stage (n=2) pmos
 graph.add(MOSFET(Vertex(1, 3, poly), Vertex(0, 3, diff), Vertex(2, 3, diff), wp, l))
 graph.add(MOSFET(Vertex(3, 3, poly), Vertex(4, 3, diff), Vertex(2, 3, diff), wp, l))
-graph.add(MOSFET(Vertex(5, 3, poly), Vertex(4, 3, diff), Vertex(6, 3, diff), wp, l))
+# output stage (n=2) nmos
 graph.add(MOSFET(Vertex(1, 1, poly), Vertex(0, 1, diff), Vertex(2, 1, diff), wn, l))
 graph.add(MOSFET(Vertex(3, 1, poly), Vertex(4, 1, diff), Vertex(2, 1, diff), wn, l))
-graph.add(MOSFET(Vertex(5, 1, poly), Vertex(4, 1, diff), Vertex(6, 1, diff), wn, l))
+
+# input stage pmos
+graph.add(MOSFET(Vertex(6, 3, poly), Vertex(4, 3, diff), Vertex(7, 3, diff), wp, l))
+# input stage nmos
+graph.add(MOSFET(Vertex(6, 1, poly), Vertex(4, 1, diff), Vertex(7, 1, diff), wn, l))
 
 # VDD
 graph.add(Via(Vertex(0, 3, diff), Vertex(0, 3, metal1), Vertex(0, 3, contact)))
+graph.add(Via(Vertex(4, 3, diff), Vertex(4, 3, metal1), Vertex(4, 3, contact)))
 graph.add(Wire(metal1w, Vertex(0, 3, metal1), Vertex(0, 4, metal1)))
 graph.add(Wire(metal1w, Vertex(4, 3, metal1), Vertex(4, 4, metal1)))
 graph.add(Wire(0.5, Vertex(0, 4, metal1), Vertex(4, 4, metal1)))
 
 # VSS
+graph.add(Via(Vertex(0, 1, diff), Vertex(0, 1, metal1), Vertex(0, 1, contact)))
+graph.add(Via(Vertex(4, 1, diff), Vertex(4, 1, metal1), Vertex(4, 1, contact)))
 graph.add(Wire(metal1w, Vertex(0, 0, metal1), Vertex(0, 1, metal1)))
 graph.add(Wire(metal1w, Vertex(4, 0, metal1), Vertex(4, 1, metal1)))
 graph.add(Wire(0.5, Vertex(0, 0, metal1), Vertex(4, 0, metal1)))
 
+# output
+graph.add(Via(Vertex(2, 3, diff), Vertex(2, 3, metal1), Vertex(2, 3, contact)))
+graph.add(Via(Vertex(2, 1, diff), Vertex(2, 1, metal1), Vertex(2, 1, contact)))
 graph.add(Wire(metal1w, Vertex(2, 1, metal1), Vertex(2, 2, metal1)))
 graph.add(Wire(metal1w, Vertex(2, 2, metal1), Vertex(2, 3, metal1)))
 
+# output stage gate wiring
 graph.add(Wire(polyw, Vertex(1, 1, poly), Vertex(1, 2, poly)))
 graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(1, 3, poly)))
-graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(3, 2, poly)))
 graph.add(Wire(polyw, Vertex(3, 1, poly), Vertex(3, 2, poly)))
 graph.add(Wire(polyw, Vertex(3, 2, poly), Vertex(3, 3, poly)))
+graph.add(Wire(polyw, Vertex(1, 2, poly), Vertex(3, 2, poly)))
+graph.add(Wire(polyw, Vertex(3, 2, poly), Vertex(5, 2, poly)))
 
-graph.add(Via(Vertex(3, 2, poly), Vertex(3, 2, metal1), Vertex(3, 2, via1)))
+# output stage gate to m1
+graph.add(Via(Vertex(5, 2, poly), Vertex(5, 2, metal1), Vertex(5, 2, contact)))
 
-graph.add(Wire(metal1w, Vertex(3, 2, metal1), Vertex(6, 2, metal1)))
-graph.add(Wire(metal1w, Vertex(6, 1, metal1), Vertex(6, 2, metal1)))
-graph.add(Wire(metal1w, Vertex(6, 2, metal1), Vertex(6, 3, metal1)))
+# input stage to output stage input m1
+graph.add(Wire(metal1w, Vertex(5, 2, metal1), Vertex(7, 2, metal1)))
+graph.add(Wire(metal1w, Vertex(7, 1, metal1), Vertex(7, 2, metal1)))
+graph.add(Wire(metal1w, Vertex(7, 2, metal1), Vertex(7, 3, metal1)))
 
-graph.add(Wire(polyw, Vertex(5, 1, poly), Vertex(5, 2, poly)))
-graph.add(Wire(polyw, Vertex(5, 2, poly), Vertex(5, 3, poly)))
-graph.add(Wire(polyw, Vertex(5, 2, poly), Vertex(7, 2, poly)))
+# input stage gate wiring
+graph.add(Wire(polyw, Vertex(6, 1, poly), Vertex(6, 2, poly)))
+graph.add(Wire(polyw, Vertex(6, 2, poly), Vertex(6, 3, poly)))
+
+# input pin
+graph.add(Wire(polyw, Vertex(6, 2, poly), Vertex(8, 2, poly)))
 
 
 solver = ConstraintSolver(graph)
