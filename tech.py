@@ -14,8 +14,6 @@ metal1  = 3
 via1    = 4
 metal2  = 5
 
-num_layers = 6
-
 
 # -------------------------------------------------------------
 
@@ -48,10 +46,6 @@ class TechRules(object):
     else:
       return None
 
-  # gets the number of functional layer indexes
-  def layers(self):
-    return num_layers
-    
   def create_layers(self, layout):
 
     layers = {}
