@@ -1,5 +1,18 @@
 
+from .component import Component
+
 class Graph(object):
+
+  """
+  This class represents the abstract layout graph
+
+  The graph is basically a collection of components
+  which connect to each other through abstract layout
+  nodes.
+
+  Public attributes:
+  * components: The list of components
+  """
 
   def __init__(self):
     self.components = []
@@ -8,7 +21,10 @@ class Graph(object):
     self.components_per_layer = {}
     self.components_per_index = {}
 
-  def add(self, component):
+  def add(self, component: Component):
+    """
+    Adds a new component to the graph
+    """
 
     self.components.append(component)
 
@@ -31,7 +47,10 @@ class Graph(object):
         self.components_per_layer[l].append(component)
 
 
-  def components_for_node(self, ixy):
+  def components_for_node(self, ixy: (int, int)) -> [Component]:
+    """
+    Gets the components attached to a certain node
+    """
     if ixy not in self.components_per_index:
       return []
     else:

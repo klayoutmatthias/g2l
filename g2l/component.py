@@ -1,6 +1,5 @@
 
 from .node import Node
-from .graph import Graph
 from .box import Box
 import klayout.db as kl
 
@@ -43,9 +42,11 @@ class Component(object):
     """
     return {}
 
-  def boxes(self, graph: Graph) -> [Box]:
+  def boxes(self, graph) -> [Box]:
     """
     Returns the abstract boxes the component is made of
+
+    :param graph: the graph object (Graph)
     """
     return []
 
@@ -68,9 +69,10 @@ class Component(object):
     return self.nodes()[0].iy == self.nodes()[-1].iy;
 
   # default implementation, based on the outline boxes
-  def geometry(self, graph: Graph, x_coordinates: { int: float }, y_coordinates: { int: float }) -> [ [int, kl.DBox] ]:
+  def geometry(self, graph, x_coordinates: { int: float }, y_coordinates: { int: float }) -> [ [int, kl.DBox] ]:
     """
     Renders a list of physical boxes
+    :param graph: the graph object (Graph)
     :param x_coordinates: gives physical coordinates for abstract ones
     :param y_coordinates: gives physical coordinates for abstract ones
 

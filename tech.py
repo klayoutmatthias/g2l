@@ -16,19 +16,6 @@ metal2  = 5
 
 num_layers = 6
 
-def create_layers(layout):
-
-  layers = {}
-
-  layers[diff]    = layout.layer(2, 0)
-  layers[poly]    = layout.layer(7, 0)
-  layers[contact] = layout.layer(14, 0)
-  layers[metal1]  = layout.layer(15, 0)
-  layers[via1]    = layout.layer(16, 0)
-  layers[metal2]  = layout.layer(17, 0)
-
-  return layers
-  
 
 # -------------------------------------------------------------
 
@@ -64,6 +51,19 @@ class TechRules(object):
   # gets the number of functional layer indexes
   def layers(self):
     return num_layers
+    
+  def create_layers(self, layout):
+
+    layers = {}
+
+    layers[diff]    = layout.layer(2, 0)
+    layers[poly]    = layout.layer(7, 0)
+    layers[contact] = layout.layer(14, 0)
+    layers[metal1]  = layout.layer(15, 0)
+    layers[via1]    = layout.layer(16, 0)
+    layers[metal2]  = layout.layer(17, 0)
+
+    return layers
     
   def default_wire_width(self, layer):
 

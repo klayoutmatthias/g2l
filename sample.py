@@ -98,7 +98,7 @@ solver.solve()
 layout = kl.Layout()
 top_cell = layout.create_cell("TOP")
 
-solver.produce(layout, top_cell, tech.create_layers(layout))
+solver.produce(layout, top_cell)
 
 layout.write(output)
 print(f"{output} written.")

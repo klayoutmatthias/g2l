@@ -1,12 +1,35 @@
 
 from .tech import Tech
+from .graph import Graph
+from .box import Box
 import klayout.db as kl
 import math
 import logging
 
 class Solver(object):
 
-  def __init__(self, graph):
+  """
+  The constraint solver
+
+  The solver will use the constraints it finds int he 
+  technology singleton (Tech.rules) and us them to 
+  create physical layout from the abstract layout graph.
+
+  This implementation is not very elaborate and rather
+  brute force. It is intended as a demonstrator currently.
+
+  To use the solver instantiate it with the graph and 
+  use the "solve" method. After this, use "produce"
+  to produce the physical layout as a KLayout Cell.
+  """
+
+  def __init__(self, graph: Graph):
+
+    """
+    Creates a solver object
+
+    :param graph: the abstract layout graph
+    """
 
     self.graph = graph
     self.ix = sorted([ v for v in graph.x_indexes ])
@@ -16,7 +39,39 @@ class Solver(object):
 
     self.tech_rules = Tech.rules
 
-  def solve(self, initial_grid_x = 10.0, initial_grid_y = 10.0, threshold = 0.05, max_iter = 10, horizonal_first = True):
+  def solve(self, initial_grid_x = 10.0, initial_grid_y = 10.0, threshold = 0.001, max_iter = 10, horizonal_first = True) -> bool:
+    """
+    Solves the constraint puzzle
+
+    This method will try to solve the constraints given by 
+    the technology singleton (Tech.rules) and the components/boxes
+    inside the graph and determine actual coordinates for the 
+    abstract node coordinates such that the design rules are 
+    fulfilled.
+
+    It starts with an initial distribution on an initial grid.
+    If "horizontal_first" is present, it will first determine 
+    a compact as possible horizontal arrangement, followed by
+    the same step in the vertical direction.
+
+    It will iterate these steps until either the maximum number
+    of iterations is reached or the geometry converges.
+
+    The idea of the initial grid is to be large enough, so that
+    the iterations perform a compaction. During one-dimensional
+    compaction, parts may shift in the way they block compaction
+    in the perpendicular direction. So you can try starting with
+    horizonal or vertical compaction - whatever gives a better
+    result.
+
+    :param initial_grid_x: the initial x spacing of the grid coordinates
+    :param initial_grid_y: the initial y spacing of the grid coordinates
+    :param threshold: the maximum coordinate change below which iteration will stop
+    :param max_iter: the maxmum number of iterations
+    :param horizontal_first: true, if the horizontal compaction is to be done first
+
+    :returns True, if the algorithm converged
+    """
 
     self.x_coordinates = {}
     self.y_coordinates = {}
@@ -39,11 +94,11 @@ class Solver(object):
       xc = self.x_coordinates.copy()
       yc = self.y_coordinates.copy()
 
-      self.compute_coordinates(horizonal_first)
-      self.compute_coordinates(not horizonal_first)
+      self._compute_coordinates(horizonal_first)
+      self._compute_coordinates(not horizonal_first)
 
       niter += 1
-      delta = self.diff(xc, self.x_coordinates) + self.diff(yc, self.y_coordinates)
+      delta = max(self._diff(xc, self.x_coordinates), self._diff(yc, self.y_coordinates))
 
       logger.info(f"iteration {niter}:")
       logger.info(f"x=" + ",".join([ "%.12g" % v for v in self.x_coordinates.values() ]))
@@ -54,25 +109,42 @@ class Solver(object):
 
     return niter < max_iter
 
-  # generates the layout
-  # layout and cell are layout and top cell objects respectively
-  # layers are the layer indexes in the layout by functional layer index
-  def produce(self, layout, cell, layers):
+  def produce(self, layout: kl.Layout, cell: kl.Cell):
+    """
+    Generates the layout
+
+    This method will fill the given cell with the shapes
+    from the components.
+
+    It uses the "create_layers" from the technology singleton
+    (Tech.rules) to generate the output layers.
+    """
+
+    layers = self.tech_rules.create_layers(layout)
 
     for c in self.graph.components:
 
       for g in c.geometry(self.graph, self.x_coordinates, self.y_coordinates):
-        cell.shapes(layers[g[0]]).insert(g[1])
+        (layer, box) = g
+        cell.shapes(layers[layer]).insert(box)
 
 
-  def diff(self, a, b):
+  def _diff(self, a: [float], b: [float]) -> float:
+    """
+    Computes the maximum difference between two coordinate sets
+    """
     d = 0.0
     for i in a.keys():
-      d += math.sqrt((a[i] - b[i]) ** 2)
+      d = max(d, abs(a[i] - b[i]))
     return d
 
+  def _compute_coordinates(self, h: bool):
 
-  def compute_coordinates(self, h):
+    """
+    One iteration step
+
+    Updates the coordinates either in horizontal (h = True) or vertical (h = False) direction
+    """
 
     prev_boxes = []
     min_coord = 0.0
@@ -95,8 +167,8 @@ class Solver(object):
           for pb in prev_boxes:
             space = self.tech_rules.space(min(pb.layer, cb.layer), max(pb.layer, cb.layer))
             if space is not None:
-              coord = self.compute_coord(space, pb, cb, h)
-              if coord is not None and coord > min_coord and not self.box_is_shielded(cb, pb, prev_boxes, h):
+              coord = self._compute_coord(space, pb, cb, h)
+              if coord is not None and coord > min_coord and not self._box_is_shielded(cb, pb, prev_boxes, h):
                 min_coord = coord
 
       if h:
@@ -106,7 +178,15 @@ class Solver(object):
 
       prev_boxes += current_boxes
 
-  def box_is_shielded(self, b, wrt, other_boxes, h):
+  def _box_is_shielded(self, b: Box, wrt: Box, other_boxes: [Box], h: bool) -> bool:
+
+    """
+    Determines whether a box is shielded by other boxes
+
+    Given an interacting pair of boxes (b, wrt), this
+    method determines whether other boxes from the "other_boxes"
+    collection shield this interaction (overlap the gap).
+    """
 
     iyorx1 = max(b.iyorx1(h), wrt.iyorx1(h))
     iyorx2 = min(b.iyorx2(h), wrt.iyorx2(h))
@@ -122,13 +202,23 @@ class Solver(object):
 
     return False
 
-  def compute_coord(self, space, b1, b2, h):
-    if h:
-      return self.compute_coord_h(space, b1, b2)
-    else:
-      return self.compute_coord_v(space, b1, b2)
+  def _compute_coord(self, space: float, b1: Box, b2: Box, h: bool) -> float:
 
-  def compute_coord_h(self, space, b1, b2):
+    """
+    Computes a coordinate for a box relative to another one
+
+    Given an already fixed box b1 and a new box b2 plus a 
+    mandatory space between both, this method will compute the
+    location of the new box b2 (ix1 position if h is True or 
+    iy1 position if h is False).
+    """
+
+    if h:
+      return self._compute_coord_h(space, b1, b2)
+    else:
+      return self._compute_coord_v(space, b1, b2)
+
+  def _compute_coord_h(self, space: float, b1: Box, b2: Box) -> float:
 
     if b1.ix2 >= b2.ix1:
       return None
@@ -144,7 +234,7 @@ class Solver(object):
     
     return dbox1.right - dbox2.left
 
-  def compute_coord_v(self, space, b1, b2):
+  def _compute_coord_v(self, space: float, b1: Box, b2: Box) -> float:
 
     if b1.iy2 >= b2.iy1:
       return None
