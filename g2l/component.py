@@ -33,6 +33,11 @@ class Component(object):
   def nodes(self) -> [Node]:
     """
     Returns a list of nodes that the component attaches to
+
+    By convention, the x or y values of the nodes shall be
+    sorted in ascending order and there shall be either
+    horizontal (all y values identical) or vertical (all
+    x values identical) orientation.
     """
     return []
 
