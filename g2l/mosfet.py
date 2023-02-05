@@ -54,9 +54,15 @@ class MOSFET(Component):
     return [ sd1, self.gate_node, sd2 ]
 
   def layers(self) -> [int]:
+    """
+    Reimplements the Component interface
+    """
     return [ self.active_layer, self.poly_layer ]
 
   def via_bottom_layer(self) -> int:
+    """
+    Indicates that the active layer is suitable as a via (contact) bottom layer
+    """
     return self.active_layer
 
   def boxes(self, graph) -> [Box]:
