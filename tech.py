@@ -191,6 +191,12 @@ class MOSFETTechDefinitions(object):
   
   def gate_extension(self):
     return 0.08
+
+  def poly_layer(self):
+    return poly
+
+  def active_layer(self):
+    return diff
   
 # @@@
 Tech.mosfets = MOSFETTechDefinitions()

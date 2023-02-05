@@ -35,16 +35,16 @@ wn  = 0.6
 graph = Graph()
 
 # output stage (n=2) pmos
-graph.add(MOSFET(n(1, 3), n(0, 3), n(2, 3), poly, diff, wpo, l))
-graph.add(MOSFET(n(3, 3), n(4, 3), n(2, 3), poly, diff, wpo, l))
+graph.add(MOSFET(n(1, 3), n(0, 3), n(2, 3), wpo, l))
+graph.add(MOSFET(n(3, 3), n(4, 3), n(2, 3), wpo, l))
 # output stage (n=2) nmos
-graph.add(MOSFET(n(1, 1), n(0, 1), n(2, 1), poly, diff, wno, l))
-graph.add(MOSFET(n(3, 1), n(4, 1), n(2, 1), poly, diff, wno, l))
+graph.add(MOSFET(n(1, 1), n(0, 1), n(2, 1), wno, l))
+graph.add(MOSFET(n(3, 1), n(4, 1), n(2, 1), wno, l))
 
 # input stage pmos
-graph.add(MOSFET(n(6, 3), n(4, 3), n(7, 3), poly, diff, wp, l))
+graph.add(MOSFET(n(6, 3), n(4, 3), n(7, 3), wp, l))
 # input stage nmos
-graph.add(MOSFET(n(6, 1), n(4, 1), n(7, 1), poly, diff, wn, l))
+graph.add(MOSFET(n(6, 1), n(4, 1), n(7, 1), wn, l))
 
 # VDD
 graph.add(Via(n(0, 3), diff, contact, metal1))
