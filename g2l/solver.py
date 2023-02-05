@@ -2,6 +2,7 @@
 from .tech import Tech
 import klayout.db as kl
 import math
+import logging
 
 class Solver(object):
 
@@ -15,7 +16,7 @@ class Solver(object):
 
     self.tech_rules = Tech.rules
 
-  def solve(self, initial_grid_x = 10.0, initial_grid_y = 10.0):
+  def solve(self, initial_grid_x = 10.0, initial_grid_y = 10.0, threshold = 0.05, max_iter = 10, horizonal_first = True):
 
     self.x_coordinates = {}
     self.y_coordinates = {}
@@ -24,26 +25,32 @@ class Solver(object):
     for i in self.iy:
       self.y_coordinates[i] = initial_grid_y * i
 
-    threshold = 0.05 # @@@?
-    max_iter = 10
-
     delta = threshold * 2
     niter = 0
+
+    logger = logging.getLogger("g2l-solver")
     
+    logger.info("solving constraints")
+    logger.info(f"x=" + ",".join([ "%.12g" % v for v in self.x_coordinates.values() ]))
+    logger.info(f"y=" + ",".join([ "%.12g" % v for v in self.y_coordinates.values() ]))
+
     while delta > threshold and niter < max_iter:
 
       xc = self.x_coordinates.copy()
       yc = self.y_coordinates.copy()
 
-      self.compute_coordinates(True)
-      self.compute_coordinates(False)
+      self.compute_coordinates(horizonal_first)
+      self.compute_coordinates(not horizonal_first)
 
       niter += 1
       delta = self.diff(xc, self.x_coordinates) + self.diff(yc, self.y_coordinates)
 
-      print(f"@@@ x=" + ",".join([ "%.12g" % v for v in self.x_coordinates.values() ]))
-      print(f"@@@ y=" + ",".join([ "%.12g" % v for v in self.y_coordinates.values() ]))
-      print(f"@@@ iter={niter} -> delta={delta}")
+      logger.info(f"iteration {niter}:")
+      logger.info(f"x=" + ",".join([ "%.12g" % v for v in self.x_coordinates.values() ]))
+      logger.info(f"y=" + ",".join([ "%.12g" % v for v in self.y_coordinates.values() ]))
+      logger.info(f"difference to previous iteration: {'%.12g' % delta} (threshold is {'%.12g' % threshold})")
+
+    logger.info("solver stopped.")
 
     return niter < max_iter
 

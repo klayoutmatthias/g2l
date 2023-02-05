@@ -1,5 +1,5 @@
 
-from grid_solver import Tech
+from g2l import Tech
 import klayout.db as kl
 import math
 

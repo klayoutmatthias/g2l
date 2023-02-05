@@ -1,10 +1,13 @@
 
-from grid_solver import *
+from g2l import *
 import klayout.db as kl
+import logging
 
 # technology definitions
 import tech
 
+
+logging.basicConfig(level = logging.INFO)
 
 # ------------------------------------------------------------------
 
