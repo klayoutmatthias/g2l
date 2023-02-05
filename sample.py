@@ -4,8 +4,7 @@ import klayout.db as kl
 import logging
 
 # technology definitions
-import tech
-
+import sky130
 
 logging.basicConfig(level = logging.INFO)
 
@@ -15,24 +14,25 @@ logging.basicConfig(level = logging.INFO)
 
 output = "generated.gds"
 
-diff    = tech.diff
-contact = tech.contact
-poly    = tech.poly
-metal1  = tech.metal1
-via1    = tech.via1
-metal2  = tech.metal2
+diff    = Tech.rules.layer("diff")
+contact = Tech.rules.layer("contact")
+poly    = Tech.rules.layer("poly")
+metal1  = Tech.rules.layer("metal1")
+via1    = Tech.rules.layer("via1")
+metal2  = Tech.rules.layer("metal2")
 
-metal1w = 0.2
-metal2w = 0.2
-polyw   = 0.13
+metal1w = Tech.rules.default_wire_width(metal1)
+metal2w = Tech.rules.default_wire_width(metal2)
+polyw   = Tech.rules.default_wire_width(poly)
+polywh  = 0.27
 
-l   = 0.13
-wpo = 1.3
-wno = 0.9
-wp  = 0.9
-wn  = 0.6
+l       = Tech.mosfets.default_mos_length()
+wpo     = Tech.mosfets.min_pmos_width() * 3
+wno     = Tech.mosfets.min_nmos_width() * 3
+wp      = Tech.mosfets.min_pmos_width() * 3
+wn      = Tech.mosfets.min_nmos_width() * 3
 
-graph = Graph()
+graph   = Graph()
 
 # output stage (n=2) pmos
 graph.add(MOSFET(n(1, 3), n(0, 3), n(2, 3), wpo, l))
@@ -71,8 +71,8 @@ graph.add(Wire(polyw, poly, n(1, 1), n(1, 2)))
 graph.add(Wire(polyw, poly, n(1, 2), n(1, 3)))
 graph.add(Wire(polyw, poly, n(3, 1), n(3, 2)))
 graph.add(Wire(polyw, poly, n(3, 2), n(3, 3)))
-graph.add(Wire(polyw, poly, n(1, 2), n(3, 2)))
-graph.add(Wire(polyw, poly, n(3, 2), n(5, 2)))
+graph.add(Wire(polywh, poly, n(1, 2), n(3, 2)))
+graph.add(Wire(polywh, poly, n(3, 2), n(5, 2)))
 
 # output stage gate to m1
 graph.add(Via(n(5, 2), poly, contact, metal1))
